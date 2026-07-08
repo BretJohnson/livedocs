@@ -1,0 +1,23 @@
+{
+  "name": "@livedocs/generators",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@livedocs/ai": "workspace:*",
+    "@livedocs/store": "workspace:*",
+    "@types/mdast": "^4.0.4",
+    "remark-gfm": "^4.0.0",
+    "remark-parse": "^11.0.0",
+    "unified": "^11.0.5"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  }
+}

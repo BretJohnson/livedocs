@@ -1,0 +1,22 @@
+{
+  "name": "@livedocs/analysis",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@livedocs/store": "workspace:*",
+    "chokidar": "^4.0.3",
+    "es-module-lexer": "^1.7.0",
+    "ignore": "^7.0.0",
+    "simple-git": "^3.27.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0"
+  }
+}
