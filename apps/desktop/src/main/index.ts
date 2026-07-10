@@ -2,7 +2,8 @@ import { BrowserWindow, app, session, shell } from 'electron';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { registerHandlers } from './handlers';
-import { getSession, openWorkspace } from './session';
+import { installLaunchBridge, openFromArgv } from './launch-bridge';
+import { currentBackend, openWorkspaceRequest } from './workspace-router';
 
 // Test isolation: e2e runs point user data at a throwaway directory.
 if (process.env.LIVEDOCS_USER_DATA) {
@@ -30,6 +31,10 @@ function isWSL(): boolean {
 if (process.platform === 'linux' && (process.env.LIVEDOCS_NO_SANDBOX || isWSL())) {
   app.commandLine.appendSwitch('no-sandbox');
   app.disableHardwareAcceleration();
+}
+
+if (!installLaunchBridge()) {
+  process.exit(0);
 }
 
 function createWindow(): BrowserWindow {
@@ -126,12 +131,13 @@ app.whenReady().then(async () => {
   win.webContents.once('did-finish-load', () => {
     console.log('[livedocs] window ready');
   });
+  await openFromArgv(process.argv);
 
   // E2E / scripted launches can preopen a workspace.
   const preopen = process.env.LIVEDOCS_WORKSPACE;
   if (preopen) {
     try {
-      await openWorkspace(preopen);
+      await openWorkspaceRequest(preopen);
     } catch (err) {
       console.error('[livedocs] failed to preopen workspace', err);
     }
@@ -143,6 +149,8 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-  getSession()?.dispose();
-  if (process.platform !== 'darwin') app.quit();
+  void (async () => {
+    await currentBackend().close();
+    if (process.platform !== 'darwin') app.quit();
+  })();
 });

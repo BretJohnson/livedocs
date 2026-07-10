@@ -24,12 +24,12 @@ export function WelcomeScreen({ onOpenDialog }: { onOpenDialog: () => void }) {
           <h2>Recent workspaces</h2>
           {recents.map((r) => (
             <button
-              key={r.path}
+              key={`${r.kind}:${r.label}`}
               className="recent-item"
-              onClick={() => void api.invoke('workspace:open', { path: r.path })}
+              onClick={() => void api.invoke('workspace:open', { reference: r.reference })}
             >
               <strong>{r.name}</strong>
-              <span className="muted">{r.path}</span>
+              <span className="muted">{r.label}</span>
             </button>
           ))}
         </div>

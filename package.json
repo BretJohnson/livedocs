@@ -8,12 +8,16 @@
   },
   "scripts": {
     "dev": "pnpm --filter @livedocs/desktop dev",
+    "dev:windows-from-wsl": "pnpm --filter @livedocs/desktop dev:windows-from-wsl",
     "build": "pnpm --filter @livedocs/desktop build",
+    "dist:win": "pnpm --filter @livedocs/desktop dist:win",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:e2e": "pnpm --filter @livedocs/desktop test:e2e",
+    "smoke:wsl-agent": "pnpm --filter @livedocs/desktop smoke:wsl-agent",
+    "smoke:wsl-native": "pnpm --filter @livedocs/desktop smoke:wsl-native",
     "typecheck": "pnpm -r run typecheck"
   },
   "devDependencies": {

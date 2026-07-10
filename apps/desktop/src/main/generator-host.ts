@@ -4,15 +4,23 @@ import {
   type GeneratorContext,
   type GeneratorParams,
 } from '@livedocs/generators';
-import type { GenKey, GenResult } from '../shared/ipc';
-import { buildAIService } from './ai-config';
-import { getAppStore, type Session } from './session';
+import type { AIService } from '@livedocs/ai';
+import type { GenKey, GenResult, WorkspaceInfo, WorkspaceStore } from '@livedocs/store';
 
-function contextFor(session: Session): GeneratorContext {
+export interface GeneratorWorkspace {
+  readonly info: WorkspaceInfo;
+  readonly store: WorkspaceStore;
+}
+
+export interface GeneratorRuntime {
+  ai?(workspace: GeneratorWorkspace): AIService | null | undefined;
+}
+
+function contextFor(workspace: GeneratorWorkspace, runtime: GeneratorRuntime): GeneratorContext {
   return {
-    store: session.store,
-    workspaceRoot: session.info.path,
-    ai: buildAIService(getAppStore(), session.store) ?? undefined,
+    store: workspace.store,
+    workspaceRoot: workspace.info.path,
+    ai: runtime.ai?.(workspace) ?? undefined,
   };
 }
 
@@ -24,19 +32,23 @@ function parseParams(params: string): GeneratorParams {
   }
 }
 
-async function runAndSave(session: Session, key: GenKey): Promise<GenResult> {
+async function runAndSave(
+  workspace: GeneratorWorkspace,
+  key: GenKey,
+  runtime: GeneratorRuntime,
+): Promise<GenResult> {
   const generator = getGenerator(key.generator);
   if (!generator) {
     return { status: 'unknown-generator', name: key.generator, available: availableGenerators() };
   }
-  const ctx = contextFor(session);
+  const ctx = contextFor(workspace, runtime);
   if (generator.kind === 'ai' && !ctx.ai) {
     return { status: 'needs-run', name: key.generator, reason: 'ai-unconfigured' };
   }
   try {
     const result = await generator.generate(ctx, parseParams(key.params));
     const output = JSON.stringify(result.root);
-    session.store.saveArtifact({
+    workspace.store.saveArtifact({
       docPath: key.docPath,
       generator: key.generator,
       params: key.params,
@@ -55,12 +67,16 @@ async function runAndSave(session: Session, key: GenKey): Promise<GenResult> {
  * run on first sight; AI generators wait for an explicit user action so
  * opening a document is never a surprise provider call.
  */
-export async function getArtifact(session: Session, key: GenKey): Promise<GenResult> {
+export async function getArtifact(
+  workspace: GeneratorWorkspace,
+  key: GenKey,
+  runtime: GeneratorRuntime = {},
+): Promise<GenResult> {
   const generator = getGenerator(key.generator);
   if (!generator) {
     return { status: 'unknown-generator', name: key.generator, available: availableGenerators() };
   }
-  const existing = session.store.getArtifact(key.docPath, key.generator, key.params);
+  const existing = workspace.store.getArtifact(key.docPath, key.generator, key.params);
   if (existing) {
     return {
       status: 'ok',
@@ -70,37 +86,42 @@ export async function getArtifact(session: Session, key: GenKey): Promise<GenRes
     };
   }
   if (generator.kind === 'ai') {
-    const ctx = contextFor(session);
+    const ctx = contextFor(workspace, runtime);
     return {
       status: 'needs-run',
       name: key.generator,
       reason: ctx.ai ? 'ai-explicit' : 'ai-unconfigured',
     };
   }
-  return runAndSave(session, key);
+  return runAndSave(workspace, key, runtime);
 }
 
-export async function refreshArtifact(session: Session, key: GenKey): Promise<GenResult> {
-  return runAndSave(session, key);
+export async function refreshArtifact(
+  workspace: GeneratorWorkspace,
+  key: GenKey,
+  runtime: GeneratorRuntime = {},
+): Promise<GenResult> {
+  return runAndSave(workspace, key, runtime);
 }
 
 /**
  * Compare each stored artifact's input digest against current analysis state;
  * flip stale flags and return the keys whose staleness changed.
  */
-export function recomputeStaleness(session: Session): GenKey[] {
-  const ctx = contextFor(session);
+export function recomputeStaleness(
+  workspace: GeneratorWorkspace,
+  runtime: GeneratorRuntime = {},
+): GenKey[] {
+  const ctx = contextFor(workspace, runtime);
   const changed: GenKey[] = [];
-  for (const artifact of session.store.allArtifacts()) {
+  for (const artifact of workspace.store.allArtifacts()) {
     const generator = getGenerator(artifact.generator);
     if (!generator) continue;
     // AI artifacts are still checked for staleness without an active provider:
     // fold the artifact's stored model into the digest so repository-input
     // changes flip the stale flag even though refresh must wait for setup.
     const digestCtx: GeneratorContext =
-      generator.kind === 'ai' && !ctx.ai
-        ? { ...ctx, modelHint: artifact.provenance.model }
-        : ctx;
+      generator.kind === 'ai' && !ctx.ai ? { ...ctx, modelHint: artifact.provenance.model } : ctx;
     let digest: string;
     try {
       digest = generator.inputDigest(digestCtx, parseParams(artifact.params));
@@ -109,7 +130,12 @@ export function recomputeStaleness(session: Session): GenKey[] {
     }
     const stale = digest !== artifact.inputDigest;
     if (stale !== artifact.stale) {
-      session.store.setArtifactStale(artifact.docPath, artifact.generator, artifact.params, stale);
+      workspace.store.setArtifactStale(
+        artifact.docPath,
+        artifact.generator,
+        artifact.params,
+        stale,
+      );
       changed.push({
         docPath: artifact.docPath,
         generator: artifact.generator,

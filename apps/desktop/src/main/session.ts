@@ -1,17 +1,19 @@
 import { app } from 'electron';
-import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import {
-  GitService,
-  watchWorkspace,
-  type WatchEvent,
-  type WorkspaceWatcher,
-} from '@livedocs/analysis';
-import { AppStore, WorkspaceStore } from '@livedocs/store';
-import type { IndexStatus, WorkspaceInfo } from '../shared/ipc';
+  AppStore,
+  createLocalWorkspaceReference,
+  type LocalWorkspaceReference,
+  type WorkspaceInfo,
+} from '@livedocs/store';
+import { buildAIService } from './ai-config';
 import { broadcast } from './ipc';
 import { IndexerHost } from './indexer-host';
-import { recomputeStaleness } from './generator-host';
+import {
+  WorkspaceService,
+  type WorkspaceIndexerDriver,
+  type WorkspaceIndexerFactoryContext,
+} from './node-workspace-service';
 
 let appStore: AppStore | null = null;
 
@@ -24,75 +26,58 @@ export function getAppStore(): AppStore {
   return appStore;
 }
 
-/** Everything scoped to one open workspace; disposed when switching. */
-export class Session {
-  readonly store: WorkspaceStore;
-  readonly git: GitService;
-  private readonly watcher: WorkspaceWatcher;
-  private readonly indexer: IndexerHost;
-  indexState: IndexStatus['state'] = 'scanning';
+class WorkerIndexerDriver implements WorkspaceIndexerDriver {
+  constructor(private readonly host: IndexerHost) {}
 
-  constructor(readonly info: WorkspaceInfo) {
-    this.store = WorkspaceStore.open(dataDir(), info.path);
-    this.git = new GitService(info.path);
-
-    this.indexer = new IndexerHost(
-      { dataDir: dataDir(), workspaceRoot: info.path },
-      {
-        onScanComplete: () => {
-          this.indexState = 'ready';
-          broadcast('index:status', this.indexStatus());
-          this.afterIndexUpdate([], []);
-        },
-        onProgress: () => broadcast('index:status', this.indexStatus()),
-        onBatchComplete: (changed, removed) => this.afterIndexUpdate(changed, removed),
-        onError: (message) => console.error('[livedocs] indexer error:', message),
-      },
-    );
-
-    this.watcher = watchWorkspace(info.path, (events) => this.onWatchBatch(events));
-    this.indexer.fullScan();
-    void this.refreshGit();
+  fullScan(): void {
+    this.host.fullScan();
   }
 
-  indexStatus(): IndexStatus {
-    return { state: this.indexState, filesIndexed: this.store.fileCount() };
+  applyChanges(changed: string[], removed: string[]): void {
+    this.host.applyChanges(changed, removed);
   }
 
-  private onWatchBatch(events: WatchEvent[]): void {
-    broadcast('watcher:batch', { events });
-    const changed = events
-      .filter((e) => e.type === 'add' || e.type === 'change')
-      .map((e) => e.path);
-    const removed = events.filter((e) => e.type === 'unlink').map((e) => e.path);
-    if (changed.length > 0 || removed.length > 0) {
-      this.indexer.applyChanges(changed, removed);
-    }
-  }
-
-  /** Runs after the worker persisted index changes: staleness + git + notify. */
-  private afterIndexUpdate(changed: string[], removed: string[]): void {
-    broadcast('index:updated', { changed, removed });
-    const staleChanges = recomputeStaleness(this);
-    if (staleChanges.length > 0) broadcast('gen:staleChanged', { items: staleChanges });
-    void this.refreshGit();
-  }
-
-  private async refreshGit(): Promise<void> {
-    const info = await this.git.info();
-    if (!info.isRepo) return;
-    const commits = await this.git.recentCommits(50);
-    if (commits.length > 0) this.store.replaceCommits(commits);
-  }
-
-  dispose(): void {
-    void this.watcher.close();
-    void this.indexer.dispose();
-    this.store.close();
+  dispose(): Promise<void> {
+    return this.host.dispose();
   }
 }
 
-let current: Session | null = null;
+function createWorkerIndexer(context: WorkspaceIndexerFactoryContext): WorkspaceIndexerDriver {
+  return new WorkerIndexerDriver(
+    new IndexerHost(
+      { dataDir: context.dataDir, workspaceRoot: context.workspaceRoot },
+      {
+        onScanComplete: () => context.callbacks.onScanComplete?.(),
+        onProgress: () => context.callbacks.onProgress?.(),
+        onBatchComplete: (changed, removed) =>
+          context.callbacks.onBatchComplete?.(changed, removed),
+        onError: (message) => context.callbacks.onError?.(message),
+      },
+    ),
+  );
+}
+
+function createLocalService(): WorkspaceService {
+  return new WorkspaceService({
+    dataDir: dataDir(),
+    createIndexer: createWorkerIndexer,
+    generatorRuntime: {
+      ai: (workspace) => buildAIService(getAppStore(), workspace.store),
+    },
+    events: {
+      onWatcherBatch: (events) => broadcast('watcher:batch', { events }),
+      onIndexUpdated: (changed, removed) => broadcast('index:updated', { changed, removed }),
+      onIndexStatus: (status) => broadcast('index:status', status),
+      onGeneratedStaleChanged: (items) => broadcast('gen:staleChanged', { items }),
+    },
+    logPrefix: '[livedocs]',
+    notifyWorkspaceClosed: false,
+  });
+}
+
+export type Session = WorkspaceService;
+
+let current: WorkspaceService | null = null;
 
 export function getSession(): Session | null {
   return current;
@@ -103,15 +88,30 @@ export function requireSession(): Session {
   return current;
 }
 
-export async function openWorkspace(workspacePath: string): Promise<WorkspaceInfo> {
-  const resolved = path.resolve(workspacePath);
-  const stat = await fs.stat(resolved);
-  if (!stat.isDirectory()) throw new Error(`Not a directory: ${resolved}`);
+export async function closeWorkspace(): Promise<void> {
+  const previous = current;
+  current = null;
+  await previous?.close();
+}
 
-  current?.dispose();
-  const info: WorkspaceInfo = { path: resolved, name: path.basename(resolved) };
-  current = new Session(info);
-  getAppStore().touchRecentWorkspace(resolved, info.name);
+export async function openWorkspace(
+  workspace: string | LocalWorkspaceReference,
+): Promise<WorkspaceInfo> {
+  const reference =
+    typeof workspace === 'string'
+      ? createLocalWorkspaceReference(
+          path.resolve(workspace),
+          path.basename(path.resolve(workspace)),
+        )
+      : createLocalWorkspaceReference(workspace.path, workspace.name);
+  const service = createLocalService();
+  const info = await service.open(reference);
+  const previous = current;
+  current = service;
+  getAppStore().touchRecentWorkspace(reference, info.name);
   broadcast('workspace:changed', info);
+  void previous?.close().catch((err) => {
+    console.error('[livedocs] failed to close previous workspace:', err);
+  });
   return info;
 }

@@ -4,14 +4,43 @@
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
+  "bin": {
+    "livedocs": "scripts/livedocs-wsl.mjs"
+  },
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "dev:wsl-agent": "node scripts/dev-wsl-agent.mjs",
+    "dev:windows-from-wsl": "node scripts/livedocs-wsl.mjs .",
     "build": "electron-vite build",
+    "dist:win": "electron-vite build && electron-builder --win",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "install:wsl-launcher": "node scripts/install-wsl-launcher.mjs",
+    "smoke:wsl-agent": "node scripts/smoke-wsl-agent.mjs",
+    "smoke:wsl-native": "node scripts/smoke-wsl-native.mjs",
     "postinstall": "electron-rebuild -f -w better-sqlite3 && node ../../scripts/rebuild-store-sqlite.mjs",
     "test:e2e": "electron-vite build && playwright test"
+  },
+  "build": {
+    "appId": "dev.livedocs.desktop",
+    "productName": "LiveDocs",
+    "directories": {
+      "output": "release"
+    },
+    "protocols": [
+      {
+        "name": "LiveDocs WSL Workspace",
+        "schemes": [
+          "livedocs"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    }
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.0",
@@ -44,6 +73,7 @@
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^4.6.0",
     "electron": "^38.0.0",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^4.0.0",
     "typescript": "^5.9.0",
     "vite": "^7.0.0"

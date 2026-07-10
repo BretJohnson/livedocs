@@ -23,8 +23,12 @@ pnpm install   # installs, builds better-sqlite3, and runs electron-rebuild
 
 ```bash
 pnpm dev        # launch the app with renderer HMR and main-process hot restart
+pnpm dev:windows-from-wsl
+                # from WSL, ask the native Windows app to open this WSL workspace
 pnpm test       # unit tests (Vitest) across all packages
 pnpm test:e2e   # Playwright + Electron end-to-end suite (builds first)
+pnpm smoke:wsl-native
+                # mocked smoke check for the WSL launcher/deep-link path
 pnpm typecheck  # tsc --noEmit in every package
 pnpm lint       # ESLint
 pnpm format     # Prettier
@@ -44,9 +48,10 @@ Useful launch environment variables (used by the e2e suite, handy for scripting)
 
 ### Running under WSL
 
-`pnpm dev` detects WSL and sets `ELECTRON_DISABLE_SANDBOX=1` automatically (via
+`pnpm dev` is still the Linux Electron / WSLg fallback. It detects WSL and sets
+`ELECTRON_DISABLE_SANDBOX=1` automatically (via
 `scripts/dev.mjs`). This is required: WSL's kernel rejects Chromium's shared-memory
-syscalls under the sandbox, and the env var must be set *before* Electron launches —
+syscalls under the sandbox, and the env var must be set _before_ Electron launches —
 a runtime `--no-sandbox` switch is applied too late, so the renderer would crash
 (exit 133) and the window would be blank. You'll see harmless
 `platform_shared_memory_region` warnings in the log either way; they don't affect
@@ -58,6 +63,14 @@ yourself: `ELECTRON_DISABLE_SANDBOX=1 ./node_modules/.bin/electron .`
 Also: if you launch from inside another Electron app's integrated terminal (e.g. VS
 Code/Cursor), make sure `ELECTRON_RUN_AS_NODE` is not set, or Electron starts as plain
 Node and exits immediately.
+
+The native Windows UI path keeps the repository, Git, indexing, file watching, and
+workspace SQLite state inside WSL while presenting the UI as a Windows app. Install
+dependencies separately in Windows and WSL; Electron and `better-sqlite3` native modules
+cannot be shared across the OS boundary. From WSL, `pnpm dev:windows-from-wsl` or an
+installed `livedocs .` launcher emits a `livedocs://wsl/open?...` request for the Windows
+app. See [docs/wsl-native-windows.md](docs/wsl-native-windows.md) for setup, packaging,
+and troubleshooting details.
 
 ## Architecture map
 
@@ -78,7 +91,8 @@ apps/desktop            Electron shell
 packages/store          @livedocs/store — better-sqlite3 wrapper, migration runner,
                         per-workspace DB (files, symbols, imports, dependencies,
                         commits, generated_artifacts, ai_cache, FTS5 search_index)
-                        plus the app-global store (recents, settings)
+                        plus the app-global store (recents, settings) and shared
+                        workspace reference/protocol types
 packages/analysis       @livedocs/analysis — indexer (worker-thread entry),
                         .gitignore-aware watcher (chokidar), TS/JS extractor
                         (es-module-lexer) behind a per-language interface,

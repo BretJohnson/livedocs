@@ -1,4 +1,5 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, unlinkSync } from 'node:fs';
+import { execSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -6,6 +7,7 @@ import { WorkspaceStore } from '@livedocs/store';
 import {
   createPathFilter,
   detectLanguage,
+  GitService,
   Indexer,
   parseLogWithFiles,
   parsePackageManifest,
@@ -185,5 +187,50 @@ describe('git log parsing', () => {
     ]);
     // Renames record the post-rename path.
     expect(commits[1].files).toEqual([{ status: 'R100', path: 'new.ts' }]);
+  });
+
+  it('scopes Git history when the workspace is a child folder of a repository', async () => {
+    execSync('git init -b main', { cwd: workspace, stdio: 'ignore' });
+    const git = (cmd: string) =>
+      execSync(`git -c user.email=e2e@test -c user.name=E2E ${cmd}`, {
+        cwd: workspace,
+        stdio: 'ignore',
+      });
+
+    write('README.md', 'root only\n');
+    git('add .');
+    git('commit -m "docs: root only"');
+
+    const child = path.join(workspace, 'child');
+    write('child/a.md', 'one\n');
+    git('add .');
+    git('commit -m "feat: child one"');
+
+    write('sibling.md', 'sibling\n');
+    git('add .');
+    git('commit -m "feat: sibling"');
+
+    write('child/a.md', 'two\n');
+    git('add .');
+    git('commit -m "feat: child two"');
+
+    const service = new GitService(child);
+
+    await expect(service.info()).resolves.toEqual({ isRepo: true, branch: 'main' });
+
+    const commits = await service.recentCommits();
+    expect(commits.map((commit) => commit.message)).toEqual(['feat: child two', 'feat: child one']);
+    expect(commits[0].files).toEqual([{ status: 'M', path: 'a.md' }]);
+    expect(commits[1].files).toEqual([{ status: 'A', path: 'a.md' }]);
+
+    const fileHistory = await service.fileHistory('a.md');
+    expect(fileHistory.map((commit) => commit.message)).toEqual([
+      'feat: child two',
+      'feat: child one',
+    ]);
+
+    const diff = await service.recentDiff();
+    expect(diff).toContain('child/a.md');
+    expect(diff).not.toContain('sibling.md');
   });
 });

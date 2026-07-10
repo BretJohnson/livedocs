@@ -111,6 +111,31 @@ export const appMigrations: Migration[] = [
       `);
     },
   },
+  {
+    version: 2,
+    name: 'workspace-references-for-recents',
+    up: (db) => {
+      db.exec(`
+        ALTER TABLE recent_workspaces RENAME TO recent_workspaces_v1;
+
+        CREATE TABLE recent_workspaces (
+          identity TEXT PRIMARY KEY,
+          kind TEXT NOT NULL DEFAULT 'local',
+          path TEXT NOT NULL,
+          distro TEXT,
+          name TEXT NOT NULL,
+          label TEXT NOT NULL,
+          last_opened_at INTEGER NOT NULL
+        );
+
+        INSERT INTO recent_workspaces (identity, kind, path, distro, name, label, last_opened_at)
+        SELECT path, 'local', path, NULL, name, path, last_opened_at
+        FROM recent_workspaces_v1;
+
+        DROP TABLE recent_workspaces_v1;
+      `);
+    },
+  },
 ];
 
 /** Apply pending migrations, tracked via SQLite's user_version pragma. */

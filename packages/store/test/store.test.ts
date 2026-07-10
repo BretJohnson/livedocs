@@ -6,6 +6,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import {
   AppStore,
   WorkspaceStore,
+  createWslWorkspaceReference,
   runMigrations,
   workspaceDbFileName,
   workspaceMigrations,
@@ -54,6 +55,12 @@ describe('migrations', () => {
     expect(a).toBe(workspaceDbFileName('/some/project'));
     expect(a).not.toBe(workspaceDbFileName('/other/project'));
     expect(a).toMatch(/^project-[0-9a-f]{16}\.db$/);
+
+    const wsl = createWslWorkspaceReference('Ubuntu', '/some/project');
+    expect(workspaceDbFileName(wsl)).toBe(workspaceDbFileName(wsl));
+    expect(workspaceDbFileName(wsl)).not.toBe(
+      workspaceDbFileName(createWslWorkspaceReference('Debian', '/some/project')),
+    );
   });
 });
 
@@ -220,6 +227,21 @@ describe('AppStore', () => {
     expect(app.getSetting('ai.provider')).toBe('anthropic');
     app.setSetting('ai.provider', null);
     expect(app.getSetting('ai.provider')).toBeNull();
+    app.close();
+  });
+
+  it('preserves WSL recent workspace identity', () => {
+    const app = AppStore.open(dir);
+    app.touchRecentWorkspace(createWslWorkspaceReference('Ubuntu', '/home/me/app'));
+    app.touchRecentWorkspace(createWslWorkspaceReference('Debian', '/home/me/app'));
+
+    const recents = app.recentWorkspaces();
+    expect(recents).toHaveLength(2);
+    expect(recents.map((w) => w.label).sort()).toEqual([
+      'Debian:/home/me/app',
+      'Ubuntu:/home/me/app',
+    ]);
+    expect(recents.map((w) => w.distro).sort()).toEqual(['Debian', 'Ubuntu']);
     app.close();
   });
 });

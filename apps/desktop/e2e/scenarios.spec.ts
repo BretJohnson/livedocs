@@ -210,6 +210,85 @@ test.describe.serial('spec scenarios (git repository workspace)', () => {
   });
 });
 
+test.describe.serial('spec scenarios (WSL agent workspace)', () => {
+  let app: ElectronApplication;
+  let page: Page;
+  let userData: string;
+  let agentData: string;
+  let repo: string;
+
+  test.beforeAll(async () => {
+    const { execSync } = await import('node:child_process');
+    repo = mkdtempSync(path.join(tmpdir(), 'livedocs-e2e-wsl-'));
+    writeFileSync(path.join(repo, 'README.md'), '# WSL Agent Repo\n\nAgent search target.\n');
+    const git = (cmd: string) =>
+      execSync(`git -c user.email=e2e@test -c user.name=E2E ${cmd}`, { cwd: repo });
+    git('init -b main');
+    git('add .');
+    git('commit -m "feat: initial wsl repo"');
+
+    userData = mkdtempSync(path.join(tmpdir(), 'livedocs-e2e-wslud-'));
+    agentData = mkdtempSync(path.join(tmpdir(), 'livedocs-e2e-wsldata-'));
+    const url = new URL('livedocs://wsl/open');
+    url.searchParams.set('distro', 'Smoke');
+    url.searchParams.set('path', repo);
+    app = await _electron.launch({
+      args: [MAIN, '--no-sandbox', url.toString()],
+      env: launchEnv({
+        LIVEDOCS_USER_DATA: userData,
+        LIVEDOCS_AI_MOCK: '1',
+        LIVEDOCS_WSL_AGENT_COMMAND: process.execPath,
+        LIVEDOCS_WSL_AGENT_ARGS: JSON.stringify([
+          path.join(E2E_DIR, '..', 'out', 'main', 'wsl-agent.js'),
+        ]),
+        XDG_DATA_HOME: agentData,
+      }),
+    });
+    page = await app.firstWindow();
+    await expect(page.locator('.titlebar .workspace-name')).toHaveText(`Smoke:${repo}`, {
+      timeout: 20_000,
+    });
+    await expect(page.locator('.index-status')).toHaveText(/files indexed/, { timeout: 30_000 });
+  });
+
+  test.afterAll(async () => {
+    const proc = app?.process();
+    if (proc && !proc.killed) {
+      proc.kill();
+      await Promise.race([
+        new Promise((resolve) => proc.once('exit', resolve)),
+        new Promise((resolve) => setTimeout(resolve, 2_000)),
+      ]);
+    }
+    rmSync(userData, { recursive: true, force: true });
+    rmSync(agentData, { recursive: true, force: true });
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  test('renders documents, searches, reads Git, and updates from WSL agent events', async () => {
+    await page
+      .locator('.sidebar')
+      .getByRole('button', { name: /README\.md/ })
+      .click();
+    await expect(page.locator('.doc-article h1')).toHaveText('WSL Agent Repo');
+
+    await page.locator('.sidebar-tabs button', { hasText: 'Search' }).click();
+    await page.locator('.search-panel input').fill('target');
+    await expect(page.locator('.search-result', { hasText: 'README.md' })).toBeVisible();
+
+    await page.locator('.sidebar-tabs button', { hasText: 'History' }).click();
+    await expect(page.locator('.branch-line')).toContainText('main');
+    await expect(page.locator('.commit', { hasText: 'feat: initial wsl repo' })).toBeVisible();
+
+    await page.locator('.sidebar-tabs button', { hasText: 'Docs' }).click();
+    writeFileSync(
+      path.join(repo, 'README.md'),
+      '# WSL Agent Repo\n\nAgent search target.\n\n## Agent Update\n',
+    );
+    await expect(page.locator('.doc-article')).toContainText('Agent Update', { timeout: 20_000 });
+  });
+});
+
 test.describe.serial('spec scenarios (welcome, recents, unconfigured AI)', () => {
   let userData: string;
 

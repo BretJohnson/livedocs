@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
-import BetterSqlite3 from 'better-sqlite3';
 import type { Database } from 'better-sqlite3';
 import { runMigrations, workspaceMigrations } from './migrations.js';
+import { loadBetterSqlite3 } from './sqlite.js';
 import type {
   CommitRecord,
   DependencyRecord,
@@ -14,20 +14,33 @@ import type {
   SearchResult,
   SymbolRecord,
 } from './types.js';
+import {
+  workspaceReferenceName,
+  workspaceStorageIdentity,
+  type WorkspaceReference,
+} from './workspace-ref.js';
+
+const BetterSqlite3 = loadBetterSqlite3();
 
 /** Stable on-disk name for a workspace database, derived from its absolute path. */
-export function workspaceDbFileName(workspacePath: string): string {
-  const digest = createHash('sha256').update(path.resolve(workspacePath)).digest('hex');
+export function workspaceDbFileName(workspace: string | WorkspaceReference): string {
+  const identity =
+    typeof workspace === 'string' ? path.resolve(workspace) : workspaceStorageIdentity(workspace);
+  const displayName =
+    typeof workspace === 'string'
+      ? path.basename(path.resolve(workspace))
+      : workspaceReferenceName(workspace);
+  const digest = createHash('sha256').update(identity).digest('hex');
   const base = path
-    .basename(workspacePath)
+    .basename(displayName)
     .replace(/[^a-zA-Z0-9-_]/g, '_')
     .slice(0, 40);
   return `${base}-${digest.slice(0, 16)}.db`;
 }
 
-export function openWorkspaceDb(dataDir: string, workspacePath: string): Database {
+export function openWorkspaceDb(dataDir: string, workspace: string | WorkspaceReference): Database {
   mkdirSync(dataDir, { recursive: true });
-  const db = new BetterSqlite3(path.join(dataDir, workspaceDbFileName(workspacePath)));
+  const db = new BetterSqlite3(path.join(dataDir, workspaceDbFileName(workspace)));
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   runMigrations(db, workspaceMigrations);
@@ -42,8 +55,8 @@ export function openWorkspaceDb(dataDir: string, workspacePath: string): Databas
 export class WorkspaceStore {
   constructor(readonly db: Database) {}
 
-  static open(dataDir: string, workspacePath: string): WorkspaceStore {
-    return new WorkspaceStore(openWorkspaceDb(dataDir, workspacePath));
+  static open(dataDir: string, workspace: string | WorkspaceReference): WorkspaceStore {
+    return new WorkspaceStore(openWorkspaceDb(dataDir, workspace));
   }
 
   close(): void {

@@ -25,6 +25,7 @@ export default function App() {
   const [aiPanel, setAIPanel] = useState<AIPanelState | null>(null);
   const [draft, setDraft] = useState<DraftRequest | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [connectionMessage, setConnectionMessage] = useState<string | null>(null);
   const treeRefreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refreshWorkspaceState = useCallback(() => {
@@ -42,10 +43,19 @@ export default function App() {
 
   useEvent('workspace:changed', (info) => {
     setWorkspace(info);
+    if (info) setConnectionMessage(null);
     setCurrent(null);
     setTree(null);
     setGit(null);
     if (info) refreshWorkspaceState();
+  });
+
+  useEvent('workspace:connection', (event) => {
+    if (event.state === 'error' || event.state === 'disconnected') {
+      setConnectionMessage(event.message ?? 'The workspace agent disconnected.');
+    } else if (event.state === 'connected') {
+      setConnectionMessage(null);
+    }
   });
 
   useEvent('watcher:batch', () => {
@@ -125,7 +135,11 @@ export default function App() {
     <div className="app">
       <header className="titlebar">
         <span className="brand">LiveDocs</span>
-        {workspace && <span className="workspace-name">{workspace.name}</span>}
+        {workspace && (
+          <span className="workspace-name" title={workspace.label}>
+            {workspace.kind === 'wsl' ? workspace.label : workspace.name}
+          </span>
+        )}
         <span className="spacer" />
         {indexStatus && workspace && (
           <span className="index-status" title="Repository index">
@@ -144,6 +158,7 @@ export default function App() {
           ⚙
         </button>
       </header>
+      {connectionMessage && <div className="connection-banner">{connectionMessage}</div>}
 
       <div className="app-body">
         {workspace ? (

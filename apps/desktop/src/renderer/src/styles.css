@@ -137,6 +137,9 @@ select {
 }
 .workspace-name {
   color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .spacer {
   flex: 1;
@@ -144,6 +147,12 @@ select {
 .index-status {
   font-size: 12px;
   color: var(--fg-muted);
+}
+.connection-banner {
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--danger);
+  background: var(--danger-bg);
+  color: var(--danger);
 }
 .app-body {
   display: flex;
