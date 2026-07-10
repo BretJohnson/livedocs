@@ -29,11 +29,50 @@ interface PendingRequest {
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
+const STDERR_TAIL_LIMIT = 4_000;
+const WSL_AGENT_SHELL_SCRIPT = [
+  'AGENT="${XDG_DATA_HOME:-$HOME/.local/share}/livedocs/bin/livedocs-wsl-agent";',
+  'if [ -x "$AGENT" ]; then',
+  'exec "$AGENT" "$@";',
+  'fi;',
+  'echo "livedocs-wsl-agent was not found at $AGENT. Run pnpm build && pnpm --filter @livedocs/desktop install:wsl-launcher inside the WSL checkout, or set LIVEDOCS_WSL_AGENT_COMMAND." >&2;',
+  'exit 127',
+].join(' ');
+
+export function defaultWslAgentArgs(distro: string, serializedWorkspace: string): string[] {
+  return [
+    '-d',
+    distro,
+    '--',
+    'sh',
+    '-c',
+    WSL_AGENT_SHELL_SCRIPT,
+    'livedocs-wsl-agent',
+    '--workspace',
+    serializedWorkspace,
+  ];
+}
+
+export function formatWslAgentExitMessage(
+  detail: string,
+  exitCode: number | null,
+  stderr: string,
+): string {
+  const output = stderr.trim().replace(/\s+/g, ' ');
+  let message = `WSL agent stopped (${detail})`;
+  if (output) message += `: ${output}`;
+  if (exitCode === 127) {
+    message +=
+      '. Install the WSL agent from the WSL checkout with `pnpm build` and `pnpm --filter @livedocs/desktop install:wsl-launcher`; make sure WSL has Linux Node.js installed.';
+  }
+  return message;
+}
 
 export class WslAgentClient {
   private child: ChildProcessWithoutNullStreams | null = null;
   private stoppingChild: ChildProcessWithoutNullStreams | null = null;
   private buffer = '';
+  private stderrTail = '';
   private readonly pending = new Map<string, PendingRequest>();
 
   constructor(private readonly options: WslAgentClientOptions) {}
@@ -42,16 +81,18 @@ export class WslAgentClient {
     if (this.child) return;
     const child = this.spawnAgent();
     this.child = child;
+    this.stderrTail = '';
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => this.onStdout(chunk));
     child.stderr.on('data', (chunk: string) => {
+      this.stderrTail = `${this.stderrTail}${chunk}`.slice(-STDERR_TAIL_LIMIT);
       if (process.env.LIVEDOCS_DEBUG) console.error(`[wsl-agent] ${chunk.trimEnd()}`);
     });
     child.on('error', (err) => this.failAll(err));
     child.on('exit', (code, signal) => {
       const detail = signal ? `signal ${signal}` : `exit code ${code ?? 'unknown'}`;
-      const message = `WSL agent stopped (${detail})`;
+      const message = formatWslAgentExitMessage(detail, code, this.stderrTail);
       if (this.child === child) this.child = null;
       this.failAll(new Error(message));
       if (this.stoppingChild === child) {
@@ -156,11 +197,9 @@ export class WslAgentClient {
         'Opening a WSL workspace requires Windows or LIVEDOCS_WSL_AGENT_COMMAND for development.',
       );
     }
-    return spawn(
-      'wsl.exe',
-      ['-d', this.options.reference.distro, '--', 'livedocs-wsl-agent', '--workspace', serialized],
-      { stdio: ['pipe', 'pipe', 'pipe'] },
-    );
+    return spawn('wsl.exe', defaultWslAgentArgs(this.options.reference.distro, serialized), {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
   }
 
   private write(message: AgentWireMessage): void {

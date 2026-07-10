@@ -1,17 +1,135 @@
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, unlinkSync, existsSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test, expect, _electron, type ElectronApplication, type Page } from '@playwright/test';
+import { defaultWslAgentArgs, formatWslAgentExitMessage } from '../src/main/agent-client';
 
 const E2E_DIR = import.meta.dirname;
 const FIXTURE = path.join(E2E_DIR, 'fixtures', 'sample-repo');
 const MAIN = path.join(E2E_DIR, '..', 'out', 'main', 'index.js');
+const MOCK_WSL_TEMP_ROOT = path.join(E2E_DIR, '..', 'test-results', 'mock-wsl');
 
 function launchEnv(extra: Record<string, string>): Record<string, string> {
   const env = { ...process.env } as Record<string, string>;
   delete env.ELECTRON_RUN_AS_NODE;
   return { ...env, LIVEDOCS_NO_SANDBOX: '1', ...extra };
 }
+
+function mkMockWslWorkspace(prefix: string): string {
+  mkdirSync(MOCK_WSL_TEMP_ROOT, { recursive: true });
+  return mkdtempSync(path.join(MOCK_WSL_TEMP_ROOT, prefix));
+}
+
+function mockWslPathForWindowsRepo(repo: string): string {
+  if (process.platform !== 'win32') return repo;
+  const absolute = path.resolve(repo);
+  const repoRoot = path.parse(absolute).root;
+  const cwdRoot = path.parse(process.cwd()).root;
+  if (repoRoot.toLowerCase() !== cwdRoot.toLowerCase()) {
+    throw new Error(`Mock WSL workspace must be on ${cwdRoot}; got ${absolute}`);
+  }
+  // Test-only: the mocked WSL agent is Windows node, where /foo resolves on
+  // the current drive. Real \\wsl$ paths are converted in workspace-ref.ts.
+  return `/${absolute.slice(repoRoot.length).split(path.sep).join('/')}`;
+}
+
+function wslUncPath(distro: string, posixPath: string): string {
+  return `\\\\wsl$\\${distro}${posixPath.split('/').join('\\')}`;
+}
+
+function wslAgentEnv(agentData: string): Record<string, string> {
+  return {
+    LIVEDOCS_WSL_AGENT_COMMAND: process.execPath,
+    LIVEDOCS_WSL_AGENT_ARGS: JSON.stringify([
+      path.join(E2E_DIR, '..', 'out', 'main', 'wsl-agent.js'),
+    ]),
+    XDG_DATA_HOME: agentData,
+  };
+}
+
+async function closeElectronApp(app?: ElectronApplication): Promise<void> {
+  if (!app) return;
+  const proc = app.process();
+  await app.close().catch(() => undefined);
+  if (proc && !proc.killed) {
+    proc.kill();
+    await Promise.race([
+      new Promise((resolve) => proc.once('exit', resolve)),
+      new Promise((resolve) => setTimeout(resolve, 2_000)),
+    ]);
+  }
+}
+
+function treeContainsText(root: string, needle: string): boolean {
+  if (!existsSync(root)) return false;
+  let entries: string[];
+  try {
+    entries = readdirSync(root);
+  } catch {
+    return false;
+  }
+  for (const entry of entries) {
+    const absolute = path.join(root, entry);
+    let stat;
+    try {
+      stat = statSync(absolute);
+    } catch {
+      continue;
+    }
+    if (stat.isDirectory()) {
+      if (treeContainsText(absolute, needle)) return true;
+    } else if (stat.isFile()) {
+      try {
+        if (readFileSync(absolute, 'utf8').includes(needle)) return true;
+      } catch {
+        // Match grep's tolerance for unreadable or still-locked Windows files.
+      }
+    }
+  }
+  return false;
+}
+
+test.describe('WSL agent launch command', () => {
+  test('passes workspace JSON outside the shell script and invokes the private agent path', () => {
+    const serialized = '{"version":1,"kind":"wsl","distro":"Ubuntu","path":"/home/me/repo"}';
+    const args = defaultWslAgentArgs('Ubuntu', serialized);
+
+    expect(args.slice(0, 5)).toEqual(['-d', 'Ubuntu', '--', 'sh', '-c']);
+    expect(args.at(-2)).toBe('--workspace');
+    expect(args.at(-1)).toBe(serialized);
+    expect(args[5]).toContain(
+      'AGENT="${XDG_DATA_HOME:-$HOME/.local/share}/livedocs/bin/livedocs-wsl-agent"',
+    );
+    expect(args[5]).toContain('exec "$AGENT" "$@"');
+    expect(args[5]).not.toContain('PATH=');
+    expect(args[5]).not.toContain('command -v');
+    expect(args[5]).not.toContain(serialized);
+  });
+
+  test('adds setup guidance for WSL command-not-found exits', () => {
+    const message = formatWslAgentExitMessage(
+      'exit code 127',
+      127,
+      'livedocs-wsl-agent was not found at /home/me/.local/share/livedocs/bin/livedocs-wsl-agent\n',
+    );
+
+    expect(message).toContain('WSL agent stopped (exit code 127)');
+    expect(message).toContain('livedocs-wsl-agent was not found');
+    expect(message).toContain('pnpm --filter @livedocs/desktop install:wsl-launcher');
+    expect(message).toContain('Linux Node.js');
+  });
+});
 
 test.describe.serial('spec scenarios (fixture workspace, mock AI)', () => {
   let app: ElectronApplication;
@@ -33,7 +151,7 @@ test.describe.serial('spec scenarios (fixture workspace, mock AI)', () => {
   });
 
   test.afterAll(async () => {
-    await app?.close();
+    await closeElectronApp(app);
     rmSync(userData, { recursive: true, force: true });
   });
 
@@ -131,13 +249,6 @@ test.describe.serial('spec scenarios (fixture workspace, mock AI)', () => {
     await expect(page.locator('.doc-article .code-block').first()).toBeVisible();
     await page.locator('.titlebar button[title="Toggle light/dark theme"]').click();
   });
-
-  test('non-git workspace hides git features gracefully', async () => {
-    await expect(page.locator('.doc-actions button', { hasText: 'History' })).toHaveCount(0);
-    await page.locator('.sidebar-tabs button', { hasText: 'History' }).click();
-    await expect(page.locator('.sidebar-body')).toContainText('not a Git repository');
-    await page.locator('.sidebar-tabs button', { hasText: 'Docs' }).click();
-  });
 });
 
 test.describe.serial('spec scenarios (git repository workspace)', () => {
@@ -148,7 +259,6 @@ test.describe.serial('spec scenarios (git repository workspace)', () => {
 
   test.beforeAll(async () => {
     const { execSync } = await import('node:child_process');
-    const { cpSync } = await import('node:fs');
     repo = mkdtempSync(path.join(tmpdir(), 'livedocs-e2e-git-'));
     cpSync(FIXTURE, repo, { recursive: true });
     const git = (cmd: string) =>
@@ -174,7 +284,7 @@ test.describe.serial('spec scenarios (git repository workspace)', () => {
   });
 
   test.afterAll(async () => {
-    await app?.close();
+    await closeElectronApp(app);
     rmSync(userData, { recursive: true, force: true });
     rmSync(repo, { recursive: true, force: true });
   });
@@ -210,16 +320,57 @@ test.describe.serial('spec scenarios (git repository workspace)', () => {
   });
 });
 
+test.describe.serial('spec scenarios (non-git workspace)', () => {
+  let app: ElectronApplication;
+  let page: Page;
+  let userData: string;
+  let workspace: string;
+
+  test.beforeAll(async () => {
+    workspace = mkdtempSync(path.join(tmpdir(), 'livedocs-e2e-nongit-'));
+    cpSync(FIXTURE, workspace, { recursive: true });
+    userData = mkdtempSync(path.join(tmpdir(), 'livedocs-e2e-nongitud-'));
+    app = await _electron.launch({
+      args: [MAIN, '--no-sandbox'],
+      env: launchEnv({
+        LIVEDOCS_WORKSPACE: workspace,
+        LIVEDOCS_USER_DATA: userData,
+        LIVEDOCS_AI_MOCK: '1',
+      }),
+    });
+    page = await app.firstWindow();
+    await expect(page.locator('.index-status')).toHaveText(/files indexed/, { timeout: 30_000 });
+  });
+
+  test.afterAll(async () => {
+    await closeElectronApp(app);
+    rmSync(userData, { recursive: true, force: true });
+    rmSync(workspace, { recursive: true, force: true });
+  });
+
+  test('hides git features gracefully', async () => {
+    await page
+      .locator('.sidebar')
+      .getByRole('button', { name: /README\.md/ })
+      .click();
+    await expect(page.locator('.doc-actions button', { hasText: 'History' })).toHaveCount(0);
+    await page.locator('.sidebar-tabs button', { hasText: 'History' }).click();
+    await expect(page.locator('.sidebar-body')).toContainText('not a Git repository');
+  });
+});
+
 test.describe.serial('spec scenarios (WSL agent workspace)', () => {
   let app: ElectronApplication;
   let page: Page;
   let userData: string;
   let agentData: string;
   let repo: string;
+  let agentPath: string;
 
   test.beforeAll(async () => {
     const { execSync } = await import('node:child_process');
-    repo = mkdtempSync(path.join(tmpdir(), 'livedocs-e2e-wsl-'));
+    repo = mkMockWslWorkspace('livedocs-e2e-wsl-');
+    agentPath = mockWslPathForWindowsRepo(repo);
     writeFileSync(path.join(repo, 'README.md'), '# WSL Agent Repo\n\nAgent search target.\n');
     const git = (cmd: string) =>
       execSync(`git -c user.email=e2e@test -c user.name=E2E ${cmd}`, { cwd: repo });
@@ -231,35 +382,24 @@ test.describe.serial('spec scenarios (WSL agent workspace)', () => {
     agentData = mkdtempSync(path.join(tmpdir(), 'livedocs-e2e-wsldata-'));
     const url = new URL('livedocs://wsl/open');
     url.searchParams.set('distro', 'Smoke');
-    url.searchParams.set('path', repo);
+    url.searchParams.set('path', agentPath);
     app = await _electron.launch({
       args: [MAIN, '--no-sandbox', url.toString()],
       env: launchEnv({
         LIVEDOCS_USER_DATA: userData,
         LIVEDOCS_AI_MOCK: '1',
-        LIVEDOCS_WSL_AGENT_COMMAND: process.execPath,
-        LIVEDOCS_WSL_AGENT_ARGS: JSON.stringify([
-          path.join(E2E_DIR, '..', 'out', 'main', 'wsl-agent.js'),
-        ]),
-        XDG_DATA_HOME: agentData,
+        ...wslAgentEnv(agentData),
       }),
     });
     page = await app.firstWindow();
-    await expect(page.locator('.titlebar .workspace-name')).toHaveText(`Smoke:${repo}`, {
+    await expect(page.locator('.titlebar .workspace-name')).toHaveText(`Smoke:${agentPath}`, {
       timeout: 20_000,
     });
     await expect(page.locator('.index-status')).toHaveText(/files indexed/, { timeout: 30_000 });
   });
 
   test.afterAll(async () => {
-    const proc = app?.process();
-    if (proc && !proc.killed) {
-      proc.kill();
-      await Promise.race([
-        new Promise((resolve) => proc.once('exit', resolve)),
-        new Promise((resolve) => setTimeout(resolve, 2_000)),
-      ]);
-    }
+    await closeElectronApp(app);
     rmSync(userData, { recursive: true, force: true });
     rmSync(agentData, { recursive: true, force: true });
     rmSync(repo, { recursive: true, force: true });
@@ -286,6 +426,52 @@ test.describe.serial('spec scenarios (WSL agent workspace)', () => {
       '# WSL Agent Repo\n\nAgent search target.\n\n## Agent Update\n',
     );
     await expect(page.locator('.doc-article')).toContainText('Agent Update', { timeout: 20_000 });
+  });
+});
+
+test.describe.serial('spec scenarios (WSL UNC path routing)', () => {
+  let app: ElectronApplication;
+  let userData: string;
+  let agentData: string;
+  let repo: string;
+  let agentPath: string;
+
+  test.beforeAll(async () => {
+    repo = mkMockWslWorkspace('livedocs-e2e-wslunc-');
+    agentPath = mockWslPathForWindowsRepo(repo);
+    writeFileSync(path.join(repo, 'README.md'), '# WSL UNC Repo\n\nOpened from a UNC path.\n');
+
+    userData = mkdtempSync(path.join(tmpdir(), 'livedocs-e2e-wsluncud-'));
+    agentData = mkdtempSync(path.join(tmpdir(), 'livedocs-e2e-wsluncdata-'));
+    app = await _electron.launch({
+      args: [MAIN, '--no-sandbox'],
+      env: launchEnv({
+        LIVEDOCS_WORKSPACE: wslUncPath('Smoke', agentPath),
+        LIVEDOCS_USER_DATA: userData,
+        LIVEDOCS_AI_MOCK: '1',
+        ...wslAgentEnv(agentData),
+      }),
+    });
+  });
+
+  test.afterAll(async () => {
+    await closeElectronApp(app);
+    rmSync(userData, { recursive: true, force: true });
+    rmSync(agentData, { recursive: true, force: true });
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  test('converts a WSL UNC workspace path before opening', async () => {
+    const page = await app.firstWindow();
+    await expect(page.locator('.titlebar .workspace-name')).toHaveText(`Smoke:${agentPath}`, {
+      timeout: 20_000,
+    });
+    await expect(page.locator('.index-status')).toHaveText(/files indexed/, { timeout: 30_000 });
+    await page
+      .locator('.sidebar')
+      .getByRole('button', { name: /README\.md/ })
+      .click();
+    await expect(page.locator('.doc-article h1')).toHaveText('WSL UNC Repo');
   });
 });
 
@@ -363,17 +549,8 @@ test.describe.serial('spec scenarios (welcome, recents, unconfigured AI)', () =>
     await app.close();
 
     // The raw key must not appear in the workspace or as raw text in app data.
-    const { execSync } = await import('node:child_process');
-    const grep = (dir: string) => {
-      try {
-        execSync(`grep -r "sk-e2e-secret-123" ${JSON.stringify(dir)}`);
-        return true;
-      } catch {
-        return false;
-      }
-    };
-    expect(grep(FIXTURE)).toBe(false);
-    expect(grep(userData)).toBe(false);
+    expect(treeContainsText(FIXTURE, 'sk-e2e-secret-123')).toBe(false);
+    expect(treeContainsText(userData, 'sk-e2e-secret-123')).toBe(false);
     expect(existsSync(userData)).toBe(true);
   });
 });

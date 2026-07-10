@@ -1,14 +1,39 @@
 #!/usr/bin/env node
-import { chmodSync, copyFileSync, mkdirSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const source = path.join(import.meta.dirname, 'livedocs-wsl.mjs');
 const targetDir = process.env.LIVEDOCS_WSL_BIN || path.join(os.homedir(), '.local', 'bin');
-const target = path.join(targetDir, 'livedocs');
+const dataDir = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
+const launcherSource = path.join(import.meta.dirname, 'livedocs-wsl.mjs');
+const launcherTarget = path.join(targetDir, 'livedocs');
+const agentDir = path.join(dataDir, 'livedocs', 'bin');
+const agentTarget = path.join(agentDir, 'livedocs-wsl-agent');
+const agentEntrypoint = path.resolve(import.meta.dirname, '..', 'out', 'main', 'wsl-agent.js');
 
 mkdirSync(targetDir, { recursive: true });
-copyFileSync(source, target);
-chmodSync(target, 0o755);
-console.log(`[livedocs] Installed WSL launcher at ${target}`);
-console.log('[livedocs] Ensure this directory is on PATH inside WSL.');
+mkdirSync(agentDir, { recursive: true });
+copyFileSync(launcherSource, launcherTarget);
+chmodSync(launcherTarget, 0o755);
+writeFileSync(
+  agentTarget,
+  [
+    '#!/bin/sh',
+    `AGENT=${shQuote(agentEntrypoint)}`,
+    'if [ ! -f "$AGENT" ]; then',
+    '  echo "[livedocs] WSL agent is not built at $AGENT" >&2',
+    '  echo "[livedocs] Run pnpm build in the WSL checkout, then reinstall with pnpm --filter @livedocs/desktop install:wsl-launcher." >&2',
+    '  exit 1',
+    'fi',
+    `exec ${shQuote(process.execPath)} "$AGENT" "$@"`,
+    '',
+  ].join('\n'),
+);
+chmodSync(agentTarget, 0o755);
+console.log(`[livedocs] Installed WSL launcher at ${launcherTarget}`);
+console.log(`[livedocs] Installed WSL agent at ${agentTarget}`);
+console.log('[livedocs] Ensure the launcher directory is on PATH inside WSL.');
+
+function shQuote(value) {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}

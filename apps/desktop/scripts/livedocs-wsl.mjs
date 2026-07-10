@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
+import { URL } from 'node:url';
 
 function detectDistro() {
   return process.env.WSL_DISTRO_NAME || process.env.LIVEDOCS_WSL_DISTRO || null;

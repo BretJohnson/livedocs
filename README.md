@@ -11,9 +11,10 @@ repository except edits you explicitly accept.
 
 ## Setup
 
-Prerequisites: Node.js ≥ 20 (Node 24 recommended), [pnpm](https://pnpm.io) ≥ 10, and a
-C/C++ toolchain (`gcc`/`make`/`python3`) for the SQLite native module. Git is optional at
-runtime — non-Git workspaces degrade gracefully.
+Prerequisites: Node.js ≥ 20 (Node 24 recommended), the repo-pinned pnpm version, and a
+C/C++ toolchain for the SQLite native module. Git is optional at runtime — non-Git
+workspaces degrade gracefully. See [Developer Setup](docs/developer-setup.md) for
+Windows, Linux, and WSL setup steps.
 
 ```bash
 pnpm install   # installs, builds better-sqlite3, and runs electron-rebuild
@@ -69,8 +70,9 @@ workspace SQLite state inside WSL while presenting the UI as a Windows app. Inst
 dependencies separately in Windows and WSL; Electron and `better-sqlite3` native modules
 cannot be shared across the OS boundary. From WSL, `pnpm dev:windows-from-wsl` or an
 installed `livedocs .` launcher emits a `livedocs://wsl/open?...` request for the Windows
-app. See [docs/wsl-native-windows.md](docs/wsl-native-windows.md) for setup, packaging,
-and troubleshooting details.
+app. See [Developer Setup](docs/developer-setup.md) for prerequisites and
+[docs/wsl-native-windows.md](docs/wsl-native-windows.md) for protocol, packaging, and
+troubleshooting details.
 
 ## Architecture map
 

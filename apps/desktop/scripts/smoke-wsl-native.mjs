@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, URL } from 'node:url';
 
 const thisFile = fileURLToPath(import.meta.url);
+const launcherFile = fileURLToPath(new URL('./livedocs-wsl.mjs', import.meta.url));
 
 if (process.argv[2] === '--capture') {
   const url = process.argv[3] || '';
@@ -28,31 +29,23 @@ const env = {
     process.env.LIVEDOCS_WINDOWS_LAUNCHER_ARGS || JSON.stringify([thisFile, '--capture']),
 };
 
-const result = spawnSync(
-  process.execPath,
-  [new URL('./livedocs-wsl.mjs', import.meta.url).pathname, '.'],
-  {
-    env,
-    stdio: 'inherit',
-  },
-);
+const result = spawnSync(process.execPath, [launcherFile, '.'], {
+  env,
+  stdio: 'inherit',
+});
 
 if (result.error) throw result.error;
 if ((result.status ?? 0) !== 0) process.exit(result.status ?? 0);
 
-const dryRun = spawnSync(
-  process.execPath,
-  [new URL('./livedocs-wsl.mjs', import.meta.url).pathname, '.'],
-  {
-    env: {
-      ...env,
-      LIVEDOCS_PRINT_WINDOWS_LAUNCH_COMMAND: '1',
-      LIVEDOCS_WINDOWS_LAUNCHER: '',
-      LIVEDOCS_WINDOWS_LAUNCHER_ARGS: '',
-    },
-    encoding: 'utf8',
+const dryRun = spawnSync(process.execPath, [launcherFile, '.'], {
+  env: {
+    ...env,
+    LIVEDOCS_PRINT_WINDOWS_LAUNCH_COMMAND: '1',
+    LIVEDOCS_WINDOWS_LAUNCHER: '',
+    LIVEDOCS_WINDOWS_LAUNCHER_ARGS: '',
   },
-);
+  encoding: 'utf8',
+});
 
 if (dryRun.error) throw dryRun.error;
 if ((dryRun.status ?? 0) !== 0) {
@@ -71,18 +64,14 @@ if (!commandLine.includes('&path=')) {
   process.exit(1);
 }
 
-const missingLauncher = spawnSync(
-  process.execPath,
-  [new URL('./livedocs-wsl.mjs', import.meta.url).pathname, '.'],
-  {
-    env: {
-      ...env,
-      LIVEDOCS_WINDOWS_LAUNCHER: '/definitely/missing/livedocs.exe',
-      LIVEDOCS_WINDOWS_LAUNCHER_ARGS: '',
-    },
-    encoding: 'utf8',
+const missingLauncher = spawnSync(process.execPath, [launcherFile, '.'], {
+  env: {
+    ...env,
+    LIVEDOCS_WINDOWS_LAUNCHER: '/definitely/missing/livedocs.exe',
+    LIVEDOCS_WINDOWS_LAUNCHER_ARGS: '',
   },
-);
+  encoding: 'utf8',
+});
 
 if ((missingLauncher.status ?? 0) === 0) {
   console.error('[livedocs-smoke] missing launcher unexpectedly succeeded');

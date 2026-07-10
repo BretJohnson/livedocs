@@ -80,10 +80,31 @@ export function createWslWorkspaceReference(
   };
 }
 
+export function parseWslUncWorkspacePath(
+  workspacePath: string,
+  name?: string,
+): WslWorkspaceReference | null {
+  const normalized = workspacePath.replace(/\\/g, '/');
+  const match = normalized.match(/^\/\/(?:wsl\$|wsl\.localhost)\/([^/]+)(?:\/(.*))?$/i);
+  if (!match) return null;
+
+  const [, distro, rest = ''] = match;
+  const posixPath = `/${rest}`;
+  try {
+    return createWslWorkspaceReference(distro, posixPath, name);
+  } catch {
+    return null;
+  }
+}
+
 export function normalizeWorkspaceReference(reference: WorkspaceReference): WorkspaceReference {
-  return reference.kind === 'wsl'
-    ? createWslWorkspaceReference(reference.distro, reference.path, reference.name)
-    : createLocalWorkspaceReference(reference.path, reference.name);
+  if (reference.kind === 'wsl') {
+    return createWslWorkspaceReference(reference.distro, reference.path, reference.name);
+  }
+  return (
+    parseWslUncWorkspacePath(reference.path, reference.name) ??
+    createLocalWorkspaceReference(reference.path, reference.name)
+  );
 }
 
 export function workspaceReferenceName(reference: WorkspaceReference): string {
@@ -153,5 +174,5 @@ export function deserializeWorkspaceReference(
 export function workspaceOpenRequestToReference(request: WorkspaceOpenRequest): WorkspaceReference {
   if ('reference' in request) return normalizeWorkspaceReference(request.reference);
   if ('kind' in request) return normalizeWorkspaceReference(request);
-  return createLocalWorkspaceReference(request.path);
+  return parseWslUncWorkspacePath(request.path) ?? createLocalWorkspaceReference(request.path);
 }

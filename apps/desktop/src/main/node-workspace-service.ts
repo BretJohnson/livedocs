@@ -251,9 +251,16 @@ export class WorkspaceService {
   }
 
   async gitOverview(): Promise<GitOverview> {
-    const info = await this.requireGit().info();
+    const git = this.requireGit();
+    const store = this.requireStore();
+    const info = await git.info();
     if (!info.isRepo) return { isRepo: false, commits: [] };
-    return { isRepo: true, branch: info.branch, commits: this.requireStore().recentCommits(50) };
+    const liveCommits = await git.recentCommits(50);
+    if (liveCommits.length > 0) {
+      store.replaceCommits(liveCommits);
+      return { isRepo: true, branch: info.branch, commits: liveCommits };
+    }
+    return { isRepo: true, branch: info.branch, commits: store.recentCommits(50) };
   }
 
   gitFileHistory(relPath: string) {

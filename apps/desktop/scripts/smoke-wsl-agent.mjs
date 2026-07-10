@@ -5,8 +5,24 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const root = path.resolve(import.meta.dirname, '..');
-const workspace = mkdtempSync(path.join(tmpdir(), 'livedocs-agent-smoke-'));
+const mockWorkspaceRoot = path.join(root, 'test-results', 'mock-wsl');
+mkdirSync(mockWorkspaceRoot, { recursive: true });
+const workspace = mkdtempSync(path.join(mockWorkspaceRoot, 'livedocs-agent-smoke-'));
 const dataDir = mkdtempSync(path.join(tmpdir(), 'livedocs-agent-data-'));
+const agentWorkspace = mockWslPathForWindowsRepo(workspace);
+
+function mockWslPathForWindowsRepo(repo) {
+  if (process.platform !== 'win32') return repo;
+  const absolute = path.resolve(repo);
+  const rootPath = path.parse(absolute).root;
+  const cwdRoot = path.parse(process.cwd()).root;
+  if (rootPath.toLowerCase() !== cwdRoot.toLowerCase()) {
+    throw new Error(`Mock WSL workspace must be on ${cwdRoot}; got ${absolute}`);
+  }
+  // Test-only: the mocked WSL agent is Windows node, where /foo resolves on
+  // the current drive. Real \\wsl$ paths are converted in workspace-ref.ts.
+  return `/${absolute.slice(rootPath.length).split(path.sep).join('/')}`;
+}
 
 function git(args) {
   const result = spawnSync('git', args, { cwd: workspace, stdio: 'ignore' });
@@ -27,7 +43,12 @@ git(['init', '-b', 'main']);
 git(['-c', 'user.email=e2e@test', '-c', 'user.name=E2E', 'add', '.']);
 git(['-c', 'user.email=e2e@test', '-c', 'user.name=E2E', 'commit', '-m', 'feat: initial']);
 
-const reference = JSON.stringify({ version: 1, kind: 'wsl', distro: 'Smoke', path: workspace });
+const reference = JSON.stringify({
+  version: 1,
+  kind: 'wsl',
+  distro: 'Smoke',
+  path: agentWorkspace,
+});
 const child = spawn(
   process.execPath,
   [path.join(root, 'out', 'main', 'wsl-agent.js'), '--workspace', reference],
@@ -91,9 +112,9 @@ async function expectOk(method, params) {
 try {
   await expectOk('protocol.handshake', { clientProtocolVersion: 1, minProtocolVersion: 1 });
   const opened = await expectOk('workspace.open', {
-    reference: { version: 1, kind: 'wsl', distro: 'Smoke', path: workspace },
+    reference: { version: 1, kind: 'wsl', distro: 'Smoke', path: agentWorkspace },
   });
-  if (opened.label !== `Smoke:${workspace}`) throw new Error(`bad label: ${opened.label}`);
+  if (opened.label !== `Smoke:${agentWorkspace}`) throw new Error(`bad label: ${opened.label}`);
 
   const tree = await expectOk('workspace.tree', {});
   if (!tree.children.some((child) => child.path === 'README.md'))

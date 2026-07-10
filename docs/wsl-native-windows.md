@@ -7,6 +7,9 @@ the shared protocol.
 
 ## Development
 
+For first-time Windows, Linux, and WSL prerequisites, see
+[Developer Setup](developer-setup.md).
+
 Use separate installs:
 
 - In WSL: install repository dependencies for source analysis, Git, the WSL launcher, and
@@ -28,6 +31,13 @@ pnpm --filter @livedocs/desktop install:wsl-launcher
 pnpm dev:windows-from-wsl
 ```
 
+`install:wsl-launcher` installs the user-facing `livedocs` command into `~/.local/bin`
+by default and installs the internal `livedocs-wsl-agent` shim under
+`${XDG_DATA_HOME:-$HOME/.local/share}/livedocs/bin`. The agent shim points to the built
+agent in the current WSL checkout and the Node binary used during install, so rerun
+`pnpm build` and `install:wsl-launcher` after moving the checkout, changing Node
+versions, or updating LiveDocs.
+
 `pnpm dev:windows-from-wsl` invokes the same `livedocs://wsl/open?...` bridge as the
 installed launcher. Set `LIVEDOCS_WINDOWS_LAUNCHER` to an executable that accepts that
 URL as its final argument when testing without a registered Windows app. Extra leading
@@ -35,6 +45,11 @@ arguments can be supplied with `LIVEDOCS_WINDOWS_LAUNCHER_ARGS` as a JSON array.
 The Windows app uses the same executable-plus-JSON-args pattern for
 `LIVEDOCS_WSL_AGENT_COMMAND` and `LIVEDOCS_WSL_AGENT_ARGS` when overriding the agent
 launch command during tests.
+
+If a Windows file picker returns a WSL UNC path such as
+`\\wsl$\Ubuntu\home\me\repo` or `\\wsl.localhost\Ubuntu\home\me\repo`, LiveDocs converts
+it to a WSL workspace reference and opens it through the WSL agent. It should not be
+watched or indexed as an ordinary Windows network share.
 
 ## Published Install
 
@@ -57,10 +72,15 @@ installed from inside WSL so the agent uses Linux/Node-compatible dependencies.
   `LIVEDOCS_WINDOWS_LAUNCHER_ARGS`.
 - The app reports a protocol mismatch: rebuild/reinstall the Windows app and WSL-side
   agent from the same LiveDocs version.
+- The app reports `WSL agent stopped (exit code 127)`: install Linux Node.js inside WSL,
+  run `pnpm build`, then rerun
+  `pnpm --filter @livedocs/desktop install:wsl-launcher` from the WSL checkout.
 - A WSL workspace opens but Git/search/indexing are unavailable: check that WSL has Git,
   dependencies, and a Linux-compatible `node_modules` install.
-- Do not point the Windows app at `\\wsl$` for WSL-backed analysis. Use the WSL launcher
-  so repository operations stay on the POSIX path inside the distro.
+- If a WSL workspace opens as a local Windows/network path instead of
+  `Distro:/posix/path`, update LiveDocs and use the WSL launcher or a `\\wsl$`/
+  `\\wsl.localhost` path so repository operations stay on the POSIX path inside the
+  distro.
 
 ## Verification
 

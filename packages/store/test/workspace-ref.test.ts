@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import path from 'node:path';
 import {
   AGENT_PROTOCOL_VERSION,
   createLocalWorkspaceReference,
@@ -6,6 +7,7 @@ import {
   deserializeWorkspaceReference,
   findWslLaunchUrl,
   isProtocolVersionCompatible,
+  parseWslUncWorkspacePath,
   parseWslLaunchUrl,
   serializeWorkspaceReference,
   workspaceOpenRequestToReference,
@@ -17,11 +19,12 @@ import {
 describe('workspace references', () => {
   it('serializes and deserializes local references with stable labels', () => {
     const ref = createLocalWorkspaceReference('/tmp/project');
+    const expectedPath = path.resolve('/tmp/project');
     const roundTrip = deserializeWorkspaceReference(serializeWorkspaceReference(ref));
 
     expect(roundTrip).toEqual(ref);
-    expect(workspaceReferenceLabel(ref)).toBe('/tmp/project');
-    expect(workspaceReferenceKey(ref)).toBe('local:/tmp/project');
+    expect(workspaceReferenceLabel(ref)).toBe(expectedPath);
+    expect(workspaceReferenceKey(ref)).toBe(`local:${expectedPath}`);
   });
 
   it('preserves WSL distro and POSIX path identity', () => {
@@ -53,8 +56,30 @@ describe('workspace references', () => {
   it('keeps backward-compatible open requests for local paths', () => {
     expect(workspaceOpenRequestToReference({ path: '/tmp/project' })).toMatchObject({
       kind: 'local',
-      path: '/tmp/project',
+      path: path.resolve('/tmp/project'),
     });
+  });
+
+  it('converts WSL UNC workspace paths to agent-backed references', () => {
+    expect(parseWslUncWorkspacePath(String.raw`\\wsl$\Ubuntu\home\bret\src\livedocs`)).toEqual(
+      createWslWorkspaceReference('Ubuntu', '/home/bret/src/livedocs'),
+    );
+    expect(
+      workspaceOpenRequestToReference({
+        path: String.raw`\\wsl.localhost\Ubuntu-24.04\home\bret\my repo`,
+      }),
+    ).toEqual(createWslWorkspaceReference('Ubuntu-24.04', '/home/bret/my repo'));
+  });
+
+  it('normalizes old local references that point at WSL UNC paths', () => {
+    expect(
+      workspaceOpenRequestToReference({
+        reference: {
+          kind: 'local',
+          path: String.raw`\\wsl$\Ubuntu\home\bret\src\livedocs`,
+        },
+      }),
+    ).toEqual(createWslWorkspaceReference('Ubuntu', '/home/bret/src/livedocs'));
   });
 });
 

@@ -217,31 +217,39 @@ describe('WorkspaceStore', () => {
 describe('AppStore', () => {
   it('tracks recent workspaces most-recent-first and settings', () => {
     const app = AppStore.open(dir);
-    app.touchRecentWorkspace('/w/one', 'one');
-    app.touchRecentWorkspace('/w/two', 'two');
-    app.touchRecentWorkspace('/w/one', 'one');
-    expect(app.recentWorkspaces().map((w) => w.path)).toEqual(['/w/one', '/w/two']);
+    try {
+      const one = path.resolve('/w/one');
+      const two = path.resolve('/w/two');
+      app.touchRecentWorkspace(one, 'one');
+      app.touchRecentWorkspace(two, 'two');
+      app.touchRecentWorkspace(one, 'one');
+      expect(app.recentWorkspaces().map((w) => w.path)).toEqual([one, two]);
 
-    expect(app.getSetting('ai.provider')).toBeNull();
-    app.setSetting('ai.provider', 'anthropic');
-    expect(app.getSetting('ai.provider')).toBe('anthropic');
-    app.setSetting('ai.provider', null);
-    expect(app.getSetting('ai.provider')).toBeNull();
-    app.close();
+      expect(app.getSetting('ai.provider')).toBeNull();
+      app.setSetting('ai.provider', 'anthropic');
+      expect(app.getSetting('ai.provider')).toBe('anthropic');
+      app.setSetting('ai.provider', null);
+      expect(app.getSetting('ai.provider')).toBeNull();
+    } finally {
+      app.close();
+    }
   });
 
   it('preserves WSL recent workspace identity', () => {
     const app = AppStore.open(dir);
-    app.touchRecentWorkspace(createWslWorkspaceReference('Ubuntu', '/home/me/app'));
-    app.touchRecentWorkspace(createWslWorkspaceReference('Debian', '/home/me/app'));
+    try {
+      app.touchRecentWorkspace(createWslWorkspaceReference('Ubuntu', '/home/me/app'));
+      app.touchRecentWorkspace(createWslWorkspaceReference('Debian', '/home/me/app'));
 
-    const recents = app.recentWorkspaces();
-    expect(recents).toHaveLength(2);
-    expect(recents.map((w) => w.label).sort()).toEqual([
-      'Debian:/home/me/app',
-      'Ubuntu:/home/me/app',
-    ]);
-    expect(recents.map((w) => w.distro).sort()).toEqual(['Debian', 'Ubuntu']);
-    app.close();
+      const recents = app.recentWorkspaces();
+      expect(recents).toHaveLength(2);
+      expect(recents.map((w) => w.label).sort()).toEqual([
+        'Debian:/home/me/app',
+        'Ubuntu:/home/me/app',
+      ]);
+      expect(recents.map((w) => w.distro).sort()).toEqual(['Debian', 'Ubuntu']);
+    } finally {
+      app.close();
+    }
   });
 });
