@@ -117,9 +117,11 @@ export function workspaceReferenceName(reference: WorkspaceReference): string {
 }
 
 export function workspaceReferenceLabel(reference: WorkspaceReference): string {
-  return reference.kind === 'wsl'
-    ? `${reference.distro}:${reference.path}`
-    : path.resolve(reference.path);
+  if (reference.kind === 'wsl') {
+    const displayPath = reference.path.replace(/^\/home\/[^/]+(?=\/|$)/, '~');
+    return `${displayPath} [WSL: ${reference.distro}]`;
+  }
+  return path.resolve(reference.path);
 }
 
 export function workspaceReferenceKey(reference: WorkspaceReference): string {

@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { Database } from 'better-sqlite3';
-import { runMigrations, workspaceMigrations } from './migrations.js';
+import { openCompatibleDatabase, WORKSPACE_DB_COMPATIBILITY_EPOCH } from './database-lifecycle.js';
+import { workspaceMigrations } from './migrations.js';
 import { loadBetterSqlite3 } from './sqlite.js';
 import type {
   CommitRecord,
@@ -40,11 +41,17 @@ export function workspaceDbFileName(workspace: string | WorkspaceReference): str
 
 export function openWorkspaceDb(dataDir: string, workspace: string | WorkspaceReference): Database {
   mkdirSync(dataDir, { recursive: true });
-  const db = new BetterSqlite3(path.join(dataDir, workspaceDbFileName(workspace)));
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
-  runMigrations(db, workspaceMigrations);
-  return db;
+  return openCompatibleDatabase({
+    filename: path.join(dataDir, workspaceDbFileName(workspace)),
+    kind: 'workspace',
+    compatibilityEpoch: WORKSPACE_DB_COMPATIBILITY_EPOCH,
+    migrations: workspaceMigrations,
+    DatabaseConstructor: BetterSqlite3,
+    configure: (db) => {
+      db.pragma('journal_mode = WAL');
+      db.pragma('foreign_keys = ON');
+    },
+  });
 }
 
 /**

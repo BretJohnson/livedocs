@@ -30,8 +30,8 @@ function git(args) {
 }
 
 function cleanup() {
-  rmSync(workspace, { recursive: true, force: true });
-  rmSync(dataDir, { recursive: true, force: true });
+  rmSync(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
 
 mkdirSync(path.join(workspace, 'docs'), { recursive: true });
@@ -114,7 +114,8 @@ try {
   const opened = await expectOk('workspace.open', {
     reference: { version: 1, kind: 'wsl', distro: 'Smoke', path: agentWorkspace },
   });
-  if (opened.label !== `Smoke:${agentWorkspace}`) throw new Error(`bad label: ${opened.label}`);
+  if (opened.label !== `${agentWorkspace} [WSL: Smoke]`)
+    throw new Error(`bad label: ${opened.label}`);
 
   const tree = await expectOk('workspace.tree', {});
   if (!tree.children.some((child) => child.path === 'README.md'))
@@ -165,11 +166,16 @@ try {
   }
 
   await expectOk('agent.shutdown', {});
+  await waitFor(() => child.exitCode !== null, 'agent exit');
   console.log('[livedocs-smoke] WSL agent protocol smoke ok');
   cleanup();
 } catch (err) {
   child.kill();
-  cleanup();
   console.error(err);
+  try {
+    cleanup();
+  } catch (cleanupError) {
+    console.error('Failed to clean up WSL agent smoke directories:', cleanupError);
+  }
   process.exit(1);
 }

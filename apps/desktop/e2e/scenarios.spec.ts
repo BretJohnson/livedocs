@@ -105,7 +105,7 @@ test.describe('WSL agent launch command', () => {
     const serialized = '{"version":1,"kind":"wsl","distro":"Ubuntu","path":"/home/me/repo"}';
     const args = defaultWslAgentArgs('Ubuntu', serialized);
 
-    expect(args.slice(0, 5)).toEqual(['-d', 'Ubuntu', '--', 'sh', '-c']);
+    expect(args.slice(0, 5)).toEqual(['-d', 'Ubuntu', '--exec', 'sh', '-c']);
     expect(args.at(-2)).toBe('--workspace');
     expect(args.at(-1)).toBe(serialized);
     expect(args[5]).toContain(
@@ -124,10 +124,25 @@ test.describe('WSL agent launch command', () => {
       'livedocs-wsl-agent was not found at /home/me/.local/share/livedocs/bin/livedocs-wsl-agent\n',
     );
 
-    expect(message).toContain('WSL agent stopped (exit code 127)');
-    expect(message).toContain('livedocs-wsl-agent was not found');
-    expect(message).toContain('pnpm --filter @livedocs/desktop install:wsl-launcher');
-    expect(message).toContain('Linux Node.js');
+    expect(message).toBe(
+      [
+        'The LiveDocs WSL agent is not installed.',
+        'In WSL, open the LiveDocs checkout and run:',
+        'pnpm build',
+        'pnpm --filter @livedocs/desktop install:wsl-launcher',
+        'Agent path checked: /home/me/.local/share/livedocs/bin/livedocs-wsl-agent',
+        'Linux Node.js must be installed in WSL.',
+      ].join('\n'),
+    );
+  });
+
+  test('preserves stderr context for other command-not-found exits', () => {
+    const message = formatWslAgentExitMessage('exit code 127', 127, 'sh: node: not found\n');
+
+    expect(message).toBe(
+      'WSL agent stopped (exit code 127): sh: node: not found\n' +
+        'Make sure Linux Node.js and the LiveDocs WSL agent are installed.',
+    );
   });
 });
 
@@ -392,9 +407,12 @@ test.describe.serial('spec scenarios (WSL agent workspace)', () => {
       }),
     });
     page = await app.firstWindow();
-    await expect(page.locator('.titlebar .workspace-name')).toHaveText(`Smoke:${agentPath}`, {
-      timeout: 20_000,
-    });
+    await expect(page.locator('.titlebar .workspace-name')).toHaveText(
+      `${agentPath} [WSL: Smoke]`,
+      {
+        timeout: 20_000,
+      },
+    );
     await expect(page.locator('.index-status')).toHaveText(/files indexed/, { timeout: 30_000 });
   });
 
@@ -463,9 +481,12 @@ test.describe.serial('spec scenarios (WSL UNC path routing)', () => {
 
   test('converts a WSL UNC workspace path before opening', async () => {
     const page = await app.firstWindow();
-    await expect(page.locator('.titlebar .workspace-name')).toHaveText(`Smoke:${agentPath}`, {
-      timeout: 20_000,
-    });
+    await expect(page.locator('.titlebar .workspace-name')).toHaveText(
+      `${agentPath} [WSL: Smoke]`,
+      {
+        timeout: 20_000,
+      },
+    );
     await expect(page.locator('.index-status')).toHaveText(/files indexed/, { timeout: 30_000 });
     await page
       .locator('.sidebar')

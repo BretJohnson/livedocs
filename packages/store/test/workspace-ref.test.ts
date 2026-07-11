@@ -31,9 +31,21 @@ describe('workspace references', () => {
     const ubuntu = createWslWorkspaceReference('Ubuntu', '/home/bret/src/livedocs');
     const debian = createWslWorkspaceReference('Debian', '/home/bret/src/livedocs');
 
-    expect(workspaceReferenceLabel(ubuntu)).toBe('Ubuntu:/home/bret/src/livedocs');
+    expect(workspaceReferenceLabel(ubuntu)).toBe('~/src/livedocs [WSL: Ubuntu]');
     expect(workspaceStorageIdentity(ubuntu)).not.toBe(workspaceStorageIdentity(debian));
     expect(deserializeWorkspaceReference(serializeWorkspaceReference(ubuntu))).toEqual(ubuntu);
+  });
+
+  it('keeps WSL paths outside a home directory absolute in display labels', () => {
+    const ref = createWslWorkspaceReference('Ubuntu', '/opt/livedocs');
+
+    expect(workspaceReferenceLabel(ref)).toBe('/opt/livedocs [WSL: Ubuntu]');
+  });
+
+  it('keeps the root WSL home directory explicit in display labels', () => {
+    const ref = createWslWorkspaceReference('Alpine', '/root/src/livedocs');
+
+    expect(workspaceReferenceLabel(ref)).toBe('/root/src/livedocs [WSL: Alpine]');
   });
 
   it('rejects invalid WSL paths before they become workspace identities', () => {

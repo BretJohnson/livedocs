@@ -1,7 +1,8 @@
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import type { Database } from 'better-sqlite3';
-import { appMigrations, runMigrations } from './migrations.js';
+import { APP_DB_COMPATIBILITY_EPOCH, openCompatibleDatabase } from './database-lifecycle.js';
+import { appMigrations } from './migrations.js';
 import { loadBetterSqlite3 } from './sqlite.js';
 import type { RecentWorkspace } from './types.js';
 import {
@@ -21,9 +22,14 @@ export class AppStore {
 
   static open(dataDir: string): AppStore {
     mkdirSync(dataDir, { recursive: true });
-    const db = new BetterSqlite3(path.join(dataDir, 'app.db'));
-    db.pragma('journal_mode = WAL');
-    runMigrations(db, appMigrations);
+    const db = openCompatibleDatabase({
+      filename: path.join(dataDir, 'app.db'),
+      kind: 'app',
+      compatibilityEpoch: APP_DB_COMPATIBILITY_EPOCH,
+      migrations: appMigrations,
+      DatabaseConstructor: BetterSqlite3,
+      configure: (database) => database.pragma('journal_mode = WAL'),
+    });
     return new AppStore(db);
   }
 
@@ -37,18 +43,16 @@ export class AppStore {
         ? createLocalWorkspaceReference(workspace, name)
         : normalizeWorkspaceReference(workspace);
     const finalName = name ?? workspaceReferenceName(reference);
-    const label = workspaceReferenceLabel(reference);
     this.db
       .prepare(
         `INSERT INTO recent_workspaces
-           (identity, kind, path, distro, name, label, last_opened_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+           (identity, kind, path, distro, name, last_opened_at)
+         VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(identity) DO UPDATE SET
            kind=excluded.kind,
            path=excluded.path,
            distro=excluded.distro,
            name=excluded.name,
-           label=excluded.label,
            last_opened_at=excluded.last_opened_at`,
       )
       .run(
@@ -57,7 +61,6 @@ export class AppStore {
         reference.path,
         reference.kind === 'wsl' ? reference.distro : null,
         finalName,
-        label,
         Date.now(),
       );
   }
@@ -81,7 +84,8 @@ export class AppStore {
         kind: reference.kind,
         path: reference.path,
         name: r.name as string,
-        label: (r.label as string | null) ?? workspaceReferenceLabel(reference),
+        // Derive labels when reading so display-format changes also apply to existing rows.
+        label: workspaceReferenceLabel(reference),
         distro: reference.kind === 'wsl' ? reference.distro : undefined,
         lastOpenedAt: r.last_opened_at as number,
       };

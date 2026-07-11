@@ -15,6 +15,32 @@ import { SettingsDialog } from './components/SettingsDialog';
 import { Sidebar } from './components/Sidebar';
 import { WelcomeScreen } from './components/WelcomeScreen';
 
+function ConnectionBanner({ message }: { message: string }) {
+  const lines = message.split('\n');
+  return (
+    <div className="connection-banner" role="alert">
+      {lines.map((line, index) => {
+        const isCommand = line.startsWith('pnpm ');
+        const isDetail = line.startsWith('Agent path checked:');
+        return (
+          <div
+            className={
+              index === 0
+                ? 'connection-banner-title'
+                : isDetail
+                  ? 'connection-banner-detail'
+                  : undefined
+            }
+            key={`${index}-${line}`}
+          >
+            {isCommand ? <code>{line}</code> : line}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function App() {
   const [theme, toggleTheme] = useTheme();
   const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
@@ -158,7 +184,7 @@ export default function App() {
           ⚙
         </button>
       </header>
-      {connectionMessage && <div className="connection-banner">{connectionMessage}</div>}
+      {connectionMessage && <ConnectionBanner message={connectionMessage} />}
 
       <div className="app-body">
         {workspace ? (

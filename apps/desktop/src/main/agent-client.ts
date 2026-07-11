@@ -43,7 +43,8 @@ export function defaultWslAgentArgs(distro: string, serializedWorkspace: string)
   return [
     '-d',
     distro,
-    '--',
+    // Bypass the distro's default shell so profile output cannot corrupt the NDJSON stream.
+    '--exec',
     'sh',
     '-c',
     WSL_AGENT_SHELL_SCRIPT,
@@ -59,11 +60,24 @@ export function formatWslAgentExitMessage(
   stderr: string,
 ): string {
   const output = stderr.trim().replace(/\s+/g, ' ');
+  const missingAgent = output.match(
+    /^livedocs-wsl-agent was not found at (\/\S+?)(?:\. Run |$)/,
+  );
+  if (exitCode === 127 && missingAgent) {
+    return [
+      'The LiveDocs WSL agent is not installed.',
+      'In WSL, open the LiveDocs checkout and run:',
+      'pnpm build',
+      'pnpm --filter @livedocs/desktop install:wsl-launcher',
+      `Agent path checked: ${missingAgent[1]}`,
+      'Linux Node.js must be installed in WSL.',
+    ].join('\n');
+  }
+
   let message = `WSL agent stopped (${detail})`;
   if (output) message += `: ${output}`;
   if (exitCode === 127) {
-    message +=
-      '. Install the WSL agent from the WSL checkout with `pnpm build` and `pnpm --filter @livedocs/desktop install:wsl-launcher`; make sure WSL has Linux Node.js installed.';
+    message += '\nMake sure Linux Node.js and the LiveDocs WSL agent are installed.';
   }
   return message;
 }

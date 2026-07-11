@@ -95,11 +95,14 @@ export const workspaceMigrations: Migration[] = [
 export const appMigrations: Migration[] = [
   {
     version: 1,
-    name: 'app-schema',
+    name: 'epoch-1-app-schema',
     up: (db) => {
       db.exec(`
         CREATE TABLE recent_workspaces (
-          path TEXT PRIMARY KEY,
+          identity TEXT PRIMARY KEY,
+          kind TEXT NOT NULL DEFAULT 'local',
+          path TEXT NOT NULL,
+          distro TEXT,
           name TEXT NOT NULL,
           last_opened_at INTEGER NOT NULL
         );
@@ -111,36 +114,11 @@ export const appMigrations: Migration[] = [
       `);
     },
   },
-  {
-    version: 2,
-    name: 'workspace-references-for-recents',
-    up: (db) => {
-      db.exec(`
-        ALTER TABLE recent_workspaces RENAME TO recent_workspaces_v1;
-
-        CREATE TABLE recent_workspaces (
-          identity TEXT PRIMARY KEY,
-          kind TEXT NOT NULL DEFAULT 'local',
-          path TEXT NOT NULL,
-          distro TEXT,
-          name TEXT NOT NULL,
-          label TEXT NOT NULL,
-          last_opened_at INTEGER NOT NULL
-        );
-
-        INSERT INTO recent_workspaces (identity, kind, path, distro, name, label, last_opened_at)
-        SELECT path, 'local', path, NULL, name, path, last_opened_at
-        FROM recent_workspaces_v1;
-
-        DROP TABLE recent_workspaces_v1;
-      `);
-    },
-  },
 ];
 
 /** Apply pending migrations, tracked via SQLite's user_version pragma. */
 export function runMigrations(db: Database, migrations: Migration[]): number {
-  const current = db.pragma('user_version', { simple: true }) as number;
+  const current = validateMigrationVersion(db, migrations);
   const pending = migrations
     .filter((m) => m.version > current)
     .sort((a, b) => a.version - b.version);
@@ -152,4 +130,16 @@ export function runMigrations(db: Database, migrations: Migration[]): number {
     apply();
   }
   return db.pragma('user_version', { simple: true }) as number;
+}
+
+/** Reject databases created by a newer build before the caller performs any writes. */
+export function validateMigrationVersion(db: Database, migrations: Migration[]): number {
+  const current = db.pragma('user_version', { simple: true }) as number;
+  const latest = migrations.reduce((max, migration) => Math.max(max, migration.version), 0);
+  if (current > latest) {
+    throw new Error(
+      `Database migration version ${current} is newer than supported version ${latest}`,
+    );
+  }
+  return current;
 }

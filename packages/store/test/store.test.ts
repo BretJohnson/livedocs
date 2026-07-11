@@ -1,12 +1,17 @@
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import BetterSqlite3 from 'better-sqlite3';
 import {
   AppStore,
+  APP_DB_COMPATIBILITY_EPOCH,
   WorkspaceStore,
+  WORKSPACE_DB_COMPATIBILITY_EPOCH,
+  appMigrations,
   createWslWorkspaceReference,
+  openCompatibleDatabase,
+  readCompatibilityEpoch,
   runMigrations,
   workspaceDbFileName,
   workspaceMigrations,
@@ -50,6 +55,213 @@ describe('migrations', () => {
     expect(() => runMigrations(db, workspaceMigrations)).not.toThrow();
   });
 
+  it('tracks compatibility epochs independently from migration versions', () => {
+    const app = AppStore.open(dir);
+    const workspace = WorkspaceStore.open(dir, '/fake/workspace');
+    try {
+      expect(readCompatibilityEpoch(app.db)).toBe(APP_DB_COMPATIBILITY_EPOCH);
+      expect(app.db.pragma('user_version', { simple: true })).toBe(appMigrations.at(-1)!.version);
+      expect(readCompatibilityEpoch(workspace.db)).toBe(WORKSPACE_DB_COMPATIBILITY_EPOCH);
+      expect(workspace.db.pragma('user_version', { simple: true })).toBe(
+        workspaceMigrations.at(-1)!.version,
+      );
+    } finally {
+      workspace.close();
+      app.close();
+    }
+  });
+
+  it('applies forward migrations within an epoch and preserves existing data', () => {
+    const filename = path.join(dir, 'forward.db');
+    const first = openCompatibleDatabase({
+      filename,
+      kind: 'workspace',
+      compatibilityEpoch: 7,
+      migrations: [
+        {
+          version: 1,
+          name: 'create-items',
+          up: (db) => db.exec('CREATE TABLE items (value TEXT NOT NULL)'),
+        },
+      ],
+      DatabaseConstructor: BetterSqlite3,
+    });
+    first.prepare('INSERT INTO items (value) VALUES (?)').run('preserved');
+    first.close();
+
+    const second = openCompatibleDatabase({
+      filename,
+      kind: 'workspace',
+      compatibilityEpoch: 7,
+      migrations: [
+        {
+          version: 1,
+          name: 'create-items',
+          up: (db) => db.exec('CREATE TABLE items (value TEXT NOT NULL)'),
+        },
+        {
+          version: 2,
+          name: 'add-note',
+          up: (db) => db.exec('ALTER TABLE items ADD COLUMN note TEXT'),
+        },
+      ],
+      DatabaseConstructor: BetterSqlite3,
+    });
+    expect(second.prepare('SELECT value FROM items').pluck().get()).toBe('preserved');
+    expect(second.pragma('user_version', { simple: true })).toBe(2);
+    second.close();
+  });
+
+  it('resets mismatched epochs without affecting a separate database', () => {
+    const resetFilename = path.join(dir, 'reset.db');
+    const stableFilename = path.join(dir, 'stable.db');
+    const migration = {
+      version: 1,
+      name: 'create-items',
+      up: (db: BetterSqlite3.Database) => db.exec('CREATE TABLE items (value TEXT NOT NULL)'),
+    };
+    for (const filename of [resetFilename, stableFilename]) {
+      const db = openCompatibleDatabase({
+        filename,
+        kind: 'workspace',
+        compatibilityEpoch: 1,
+        migrations: [migration],
+        DatabaseConstructor: BetterSqlite3,
+      });
+      db.prepare('INSERT INTO items (value) VALUES (?)').run(path.basename(filename));
+      db.close();
+    }
+    writeFileSync(`${resetFilename}-wal`, 'stale wal');
+    writeFileSync(`${resetFilename}-shm`, 'stale shm');
+    const messages: string[] = [];
+
+    const reset = openCompatibleDatabase({
+      filename: resetFilename,
+      kind: 'workspace',
+      compatibilityEpoch: 2,
+      migrations: [migration],
+      DatabaseConstructor: BetterSqlite3,
+      onReset: (message) => messages.push(message),
+    });
+    expect(reset.prepare('SELECT COUNT(*) FROM items').pluck().get()).toBe(0);
+    expect(readCompatibilityEpoch(reset)).toBe(2);
+    expect(messages).toEqual([
+      '[livedocs-store] Resetting workspace database compatibility epoch 1 -> 2',
+    ]);
+    expect(existsSync(`${resetFilename}-wal`)).toBe(false);
+    expect(existsSync(`${resetFilename}-shm`)).toBe(false);
+    reset.close();
+
+    const stable = new BetterSqlite3(stableFilename);
+    expect(stable.prepare('SELECT value FROM items').pluck().get()).toBe('stable.db');
+    expect(readCompatibilityEpoch(stable)).toBe(1);
+    stable.close();
+  });
+
+  it('recreates an unreadable existing database without leaking the initial handle', () => {
+    const filename = path.join(dir, 'corrupt.db');
+    writeFileSync(filename, 'not a sqlite database');
+    const messages: string[] = [];
+
+    const recovered = openCompatibleDatabase({
+      filename,
+      kind: 'app',
+      compatibilityEpoch: 1,
+      migrations: [
+        {
+          version: 1,
+          name: 'create-items',
+          up: (db) => db.exec('CREATE TABLE items (value TEXT NOT NULL)'),
+        },
+      ],
+      DatabaseConstructor: BetterSqlite3,
+      onReset: (message) => messages.push(message),
+    });
+    expect(recovered.prepare('SELECT COUNT(*) FROM items').pluck().get()).toBe(0);
+    expect(messages).toEqual([
+      '[livedocs-store] Resetting app database compatibility epoch unreadable -> 1',
+    ]);
+    recovered.close();
+  });
+
+  it('reports a focused error when an incompatible database cannot be recreated', () => {
+    const filename = path.join(dir, 'failed-reset.db');
+    const migration = {
+      version: 1,
+      name: 'create-items',
+      up: (db: BetterSqlite3.Database) => db.exec('CREATE TABLE items (value TEXT NOT NULL)'),
+    };
+    const original = openCompatibleDatabase({
+      filename,
+      kind: 'workspace',
+      compatibilityEpoch: 1,
+      migrations: [migration],
+      DatabaseConstructor: BetterSqlite3,
+    });
+    original.close();
+
+    let constructions = 0;
+    const FailingConstructor = function (databaseFilename: string) {
+      constructions += 1;
+      if (constructions === 2) throw new Error('simulated reopen failure');
+      return new BetterSqlite3(databaseFilename);
+    } as unknown as typeof BetterSqlite3;
+
+    expect(() =>
+      openCompatibleDatabase({
+        filename,
+        kind: 'workspace',
+        compatibilityEpoch: 2,
+        migrations: [migration],
+        DatabaseConstructor: FailingConstructor,
+        onReset: () => undefined,
+      }),
+    ).toThrow(
+      /Failed to reset workspace database compatibility epoch 1 -> 2: simulated reopen failure/,
+    );
+  });
+
+  it('rejects a future migration version without modifying the database', () => {
+    const filename = path.join(dir, 'future.db');
+    const migration = {
+      version: 1,
+      name: 'create-items',
+      up: (db: BetterSqlite3.Database) => db.exec('CREATE TABLE items (value TEXT NOT NULL)'),
+    };
+    const current = openCompatibleDatabase({
+      filename,
+      kind: 'app',
+      compatibilityEpoch: 1,
+      migrations: [migration],
+      DatabaseConstructor: BetterSqlite3,
+    });
+    current.prepare('INSERT INTO items (value) VALUES (?)').run('keep me');
+    current.pragma('user_version = 2');
+    current.exec(`
+      CREATE TRIGGER reject_metadata_insert
+      BEFORE INSERT ON livedocs_database_metadata
+      BEGIN
+        SELECT RAISE(ABORT, 'metadata write attempted');
+      END;
+    `);
+    current.close();
+
+    expect(() =>
+      openCompatibleDatabase({
+        filename,
+        kind: 'app',
+        compatibilityEpoch: 1,
+        migrations: [migration],
+        DatabaseConstructor: BetterSqlite3,
+      }),
+    ).toThrow(/newer than supported/);
+
+    const unchanged = new BetterSqlite3(filename);
+    expect(unchanged.pragma('user_version', { simple: true })).toBe(2);
+    expect(unchanged.prepare('SELECT value FROM items').pluck().get()).toBe('keep me');
+    unchanged.close();
+  });
+
   it('derives a stable per-workspace db filename', () => {
     const a = workspaceDbFileName('/some/project');
     expect(a).toBe(workspaceDbFileName('/some/project'));
@@ -73,6 +285,32 @@ describe('WorkspaceStore', () => {
 
   it('persists the database file under the data dir', () => {
     expect(existsSync(path.join(dir, workspaceDbFileName('/fake/workspace')))).toBe(true);
+  });
+
+  it('reindexes normally after an incompatible workspace database reset', () => {
+    store.close();
+    const filename = path.join(dir, workspaceDbFileName('/fake/workspace'));
+    const raw = new BetterSqlite3(filename);
+    raw
+      .prepare(
+        "UPDATE livedocs_database_metadata SET value = '0' WHERE key = 'compatibility_epoch'",
+      )
+      .run();
+    raw.close();
+
+    store = WorkspaceStore.open(dir, '/fake/workspace');
+    store.upsertFile(
+      {
+        path: 'README.md',
+        language: 'markdown',
+        size: 12,
+        mtime: 1,
+        contentHash: 'reset-index',
+        isMarkdown: true,
+      },
+      'Epoch reset searchable content',
+    );
+    expect(store.search('searchable').map((hit) => hit.path)).toEqual(['README.md']);
   });
 
   it('upserts files and searches content via FTS', () => {
@@ -215,6 +453,41 @@ describe('WorkspaceStore', () => {
 });
 
 describe('AppStore', () => {
+  it('resets the released v2 schema before recording a recent workspace', () => {
+    const filename = path.join(dir, 'app.db');
+    const legacy = new BetterSqlite3(filename);
+    legacy.exec(`
+      CREATE TABLE recent_workspaces (
+        identity TEXT PRIMARY KEY,
+        kind TEXT NOT NULL DEFAULT 'local',
+        path TEXT NOT NULL,
+        distro TEXT,
+        name TEXT NOT NULL,
+        label TEXT NOT NULL,
+        last_opened_at INTEGER NOT NULL
+      );
+      CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      INSERT INTO settings (key, value) VALUES ('ai.provider', 'openai');
+      PRAGMA user_version = 2;
+    `);
+    legacy.close();
+
+    const app = AppStore.open(dir);
+    try {
+      app.touchRecentWorkspace('/fresh/workspace', 'fresh');
+      const columns = app.db.prepare('PRAGMA table_info(recent_workspaces)').all() as {
+        name: string;
+      }[];
+      expect(columns.map((column) => column.name)).not.toContain('label');
+      expect(app.recentWorkspaces()).toHaveLength(1);
+      expect(app.getSetting('ai.provider')).toBeNull();
+      expect(readCompatibilityEpoch(app.db)).toBe(APP_DB_COMPATIBILITY_EPOCH);
+      expect(app.db.pragma('user_version', { simple: true })).toBe(1);
+    } finally {
+      app.close();
+    }
+  });
+
   it('tracks recent workspaces most-recent-first and settings', () => {
     const app = AppStore.open(dir);
     try {
@@ -224,6 +497,10 @@ describe('AppStore', () => {
       app.touchRecentWorkspace(two, 'two');
       app.touchRecentWorkspace(one, 'one');
       expect(app.recentWorkspaces().map((w) => w.path)).toEqual([one, two]);
+      const recentColumns = app.db.prepare('PRAGMA table_info(recent_workspaces)').all() as {
+        name: string;
+      }[];
+      expect(recentColumns.map((column) => column.name)).not.toContain('label');
 
       expect(app.getSetting('ai.provider')).toBeNull();
       app.setSetting('ai.provider', 'anthropic');
@@ -244,8 +521,8 @@ describe('AppStore', () => {
       const recents = app.recentWorkspaces();
       expect(recents).toHaveLength(2);
       expect(recents.map((w) => w.label).sort()).toEqual([
-        'Debian:/home/me/app',
-        'Ubuntu:/home/me/app',
+        '~/app [WSL: Debian]',
+        '~/app [WSL: Ubuntu]',
       ]);
       expect(recents.map((w) => w.distro).sort()).toEqual(['Debian', 'Ubuntu']);
     } finally {

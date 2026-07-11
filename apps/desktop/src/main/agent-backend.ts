@@ -1,4 +1,5 @@
 import {
+  workspaceReferenceLabel,
   type AIStartRequest,
   type CommitRecord,
   type FileContent,
@@ -49,8 +50,8 @@ export class AgentWorkspaceBackend implements WorkspaceBackend {
             this.emit('gen:staleChanged', event.data);
             break;
           case 'workspace.changed':
-            this.info = event.data;
-            this.emit('workspace:changed', event.data);
+            this.info = normalizeWorkspaceInfo(event.data);
+            this.emit('workspace:changed', this.info);
             break;
           case 'agent.disconnected':
             this.emit('workspace:connection', {
@@ -71,7 +72,7 @@ export class AgentWorkspaceBackend implements WorkspaceBackend {
     });
     try {
       await client.connect();
-      const info = await client.request('workspace.open', { reference });
+      const info = normalizeWorkspaceInfo(await client.request('workspace.open', { reference }));
       this.client = client;
       this.info = info;
       await previousClient?.dispose();
@@ -150,6 +151,14 @@ export class AgentWorkspaceBackend implements WorkspaceBackend {
     if (!this.client) throw new Error('No WSL workspace agent is connected');
     return this.client;
   }
+}
+
+function normalizeWorkspaceInfo(info: WorkspaceInfo): WorkspaceInfo;
+function normalizeWorkspaceInfo(info: null): null;
+function normalizeWorkspaceInfo(info: WorkspaceInfo | null): WorkspaceInfo | null;
+function normalizeWorkspaceInfo(info: WorkspaceInfo | null): WorkspaceInfo | null {
+  if (!info || info.reference.kind !== 'wsl') return info;
+  return { ...info, label: workspaceReferenceLabel(info.reference) };
 }
 
 export function isWslReference(reference: WorkspaceReference): reference is WslWorkspaceReference {

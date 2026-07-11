@@ -78,7 +78,7 @@ installed from inside WSL so the agent uses Linux/Node-compatible dependencies.
 - A WSL workspace opens but Git/search/indexing are unavailable: check that WSL has Git,
   dependencies, and a Linux-compatible `node_modules` install.
 - If a WSL workspace opens as a local Windows/network path instead of
-  `Distro:/posix/path`, update LiveDocs and use the WSL launcher or a `\\wsl$`/
+  `~/path [WSL: Distro]`, update LiveDocs and use the WSL launcher or a `\\wsl$`/
   `\\wsl.localhost` path so repository operations stay on the POSIX path inside the
   distro.
 
