@@ -9,6 +9,11 @@
   "scripts": {
     "dev": "pnpm --filter @livedocs/desktop dev",
     "dev:windows-from-wsl": "pnpm --filter @livedocs/desktop dev:windows-from-wsl",
+    "build:windows-from-wsl": "pnpm --filter @livedocs/desktop build:windows-from-wsl",
+    "dist:windows-from-wsl": "pnpm --filter @livedocs/desktop dist:windows-from-wsl",
+    "launch:windows-from-wsl": "pnpm --filter @livedocs/desktop launch:windows-from-wsl",
+    "clean:windows-from-wsl": "pnpm --filter @livedocs/desktop clean:windows-from-wsl",
+    "launch:installed-windows-from-wsl": "pnpm --filter @livedocs/desktop launch:installed-windows-from-wsl",
     "build": "pnpm --filter @livedocs/desktop build",
     "dist:win": "pnpm --filter @livedocs/desktop dist:win",
     "lint": "eslint .",
@@ -18,6 +23,8 @@
     "test:e2e": "pnpm --filter @livedocs/desktop test:e2e",
     "smoke:wsl-agent": "pnpm --filter @livedocs/desktop smoke:wsl-agent",
     "smoke:wsl-native": "pnpm --filter @livedocs/desktop smoke:wsl-native",
+    "smoke:wsl-windows": "pnpm --filter @livedocs/desktop smoke:wsl-windows",
+    "smoke:wsl-windows:integration": "pnpm --filter @livedocs/desktop smoke:wsl-windows:integration",
     "typecheck": "pnpm -r run typecheck"
   },
   "devDependencies": {

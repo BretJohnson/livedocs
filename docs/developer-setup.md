@@ -168,26 +168,37 @@ cannot be shared across the Windows/Linux boundary.
 
 LiveDocs can also open a WSL-hosted repository in a native Windows Electron window
 while repository IO, Git, indexing, file watching, and workspace SQLite state stay
-inside WSL. For this path, install dependencies separately in both environments:
+inside WSL. The preferred workflow needs only one developer-managed checkout, stored in
+the WSL filesystem. LiveDocs automatically creates a disposable NTFS build mirror and
+keeps Windows/Electron-ABI dependencies there; the WSL checkout keeps its own
+Linux/Node-ABI dependencies.
 
-- Windows checkout/install: native Windows Electron runtime and Windows/Electron ABI
-  native modules.
-- WSL checkout/install: source analysis, Git, WSL launcher, and Linux/Node ABI native
-  modules.
+Install the normal Linux/WSL prerequisites above. On Windows, install Node.js, the
+repo-pinned pnpm version, Python, and Visual Studio Build Tools with the `Desktop
+development with C++` workload. WSL interop must be enabled so `powershell.exe`,
+`node.exe`, and `taskkill.exe` are callable from WSL.
 
 From the WSL checkout:
 
 ```bash
-pnpm build
-pnpm --filter @livedocs/desktop install:wsl-launcher
 pnpm dev:windows-from-wsl
+pnpm build:windows-from-wsl
+pnpm dist:windows-from-wsl
 ```
 
-`install:wsl-launcher` installs the user-facing `livedocs` command into `~/.local/bin`
-by default and installs the internal `livedocs-wsl-agent` shim under
-`${XDG_DATA_HOME:-$HOME/.local/share}/livedocs/bin`. Rerun `pnpm build` and
-`install:wsl-launcher` inside WSL after changing Node versions, moving the checkout, or
-updating LiveDocs.
+The first run performs a Windows `pnpm install` and native rebuild, so it is slower.
+Later runs reuse the mirror until a lockfile, package manifest, build configuration,
+Node ABI, or pinned pnpm change invalidates it. By default mirrors and artifacts live
+under `%LOCALAPPDATA%\LiveDocs\dev-mirrors`; set
+`LIVEDOCS_WINDOWS_MIRROR_ROOT` to another absolute drive path to relocate them.
+Build and installer artifacts intentionally remain in this disposable mirror. Copy any
+installer you want to retain before running the clean command, which removes the mirror
+and its artifacts together.
+
+Use `pnpm launch:windows-from-wsl` to launch a prepared build, and
+`pnpm clean:windows-from-wsl` to safely remove only the current checkout's owned mirror.
+The installed-app launcher remains available through
+`pnpm launch:installed-windows-from-wsl` and `livedocs .`.
 
 See [Native Windows UI From WSL](wsl-native-windows.md) for protocol registration,
 launcher overrides, packaging notes, and troubleshooting.
