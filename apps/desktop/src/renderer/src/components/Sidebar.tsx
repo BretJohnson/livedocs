@@ -1,16 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { CommitRecord, GitOverview, SearchResult, TreeNode } from '../../../shared/ipc';
 import { api } from '../api';
+import { pruneToDocs } from '../docs-tree';
 
 type Tab = 'docs' | 'files' | 'search' | 'history';
-
-/** Prune the tree to Markdown files only (docs-first navigation). */
-function pruneToDocs(node: TreeNode): TreeNode | null {
-  if (node.type === 'file') return node.isMarkdown ? node : null;
-  const children = (node.children ?? []).map(pruneToDocs).filter((c): c is TreeNode => c !== null);
-  if (children.length === 0) return null;
-  return { ...node, children };
-}
 
 function TreeView({
   node,

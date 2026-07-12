@@ -69,6 +69,7 @@ function createLocalService(): WorkspaceService {
       onIndexUpdated: (changed, removed) => broadcast('index:updated', { changed, removed }),
       onIndexStatus: (status) => broadcast('index:status', status),
       onGeneratedStaleChanged: (items) => broadcast('gen:staleChanged', { items }),
+      onConfigChanged: (info) => broadcast('workspace:changed', info),
     },
     logPrefix: '[livedocs]',
     notifyWorkspaceClosed: false,

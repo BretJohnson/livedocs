@@ -14,6 +14,8 @@
     "chokidar": "^4.0.3",
     "es-module-lexer": "^1.7.0",
     "ignore": "^7.0.0",
+    "json5": "^2.2.3",
+    "minimatch": "^10.0.3",
     "simple-git": "^3.27.0"
   },
   "devDependencies": {

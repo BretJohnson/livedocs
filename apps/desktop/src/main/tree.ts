@@ -1,12 +1,15 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { createPathFilter, isMarkdownPath } from '@livedocs/analysis';
+import { createPathFilter, isMarkdownPath, type DocumentSelector } from '@livedocs/analysis';
 import type { TreeNode } from '../shared/ipc';
 
 const MAX_NODES = 8000;
 
 /** Build the workspace file tree from disk, honoring ignore rules. */
-export async function buildTree(workspaceRoot: string): Promise<TreeNode> {
+export async function buildTree(
+  workspaceRoot: string,
+  documentSelector: DocumentSelector,
+): Promise<TreeNode> {
   const filter = createPathFilter(workspaceRoot);
   let nodes = 0;
 
@@ -35,6 +38,7 @@ export async function buildTree(workspaceRoot: string): Promise<TreeNode> {
           path: rel,
           type: 'file',
           isMarkdown: isMarkdownPath(rel),
+          isDocument: documentSelector.isDocument(rel),
         });
       }
     }

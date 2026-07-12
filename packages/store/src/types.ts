@@ -87,6 +87,12 @@ export interface WorkspaceInfo {
   path: string;
   name: string;
   label: string;
+  configDiagnostic?: WorkspaceConfigDiagnostic;
+}
+
+export interface WorkspaceConfigDiagnostic {
+  path: 'livedocs.jsonc';
+  message: string;
 }
 
 export interface TreeNode {
@@ -94,6 +100,8 @@ export interface TreeNode {
   path: string;
   type: 'dir' | 'file';
   isMarkdown?: boolean;
+  /** Whether this Markdown file is selected for docs-focused navigation. */
+  isDocument?: boolean;
   children?: TreeNode[];
 }
 

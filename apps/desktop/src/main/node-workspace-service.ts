@@ -4,9 +4,14 @@ import path from 'node:path';
 import {
   GitService,
   Indexer,
+  LIVEDOCS_CONFIG_FILENAME,
+  DEFAULT_LIVEDOCS_CONFIG,
+  createDocumentSelector,
   detectLanguage,
   isMarkdownPath,
+  loadLiveDocsConfig,
   watchWorkspace,
+  type DocumentSelector,
   type WatchEvent,
   type WorkspaceWatcher,
 } from '@livedocs/analysis';
@@ -39,6 +44,7 @@ export interface WorkspaceServiceEvents {
   onIndexStatus?(status: IndexStatus): void;
   onGeneratedStaleChanged?(items: GenKey[]): void;
   onWorkspaceChanged?(info: WorkspaceInfo | null): void;
+  onConfigChanged?(info: WorkspaceInfo): void;
 }
 
 export type NodeWorkspaceServiceEvents = WorkspaceServiceEvents;
@@ -114,6 +120,7 @@ export class WorkspaceService {
   private watcher: WorkspaceWatcher | null = null;
   private indexer: WorkspaceIndexerDriver | null = null;
   private workspaceInfo: WorkspaceInfo | null = null;
+  private documentSelector: DocumentSelector = createDocumentSelector(DEFAULT_LIVEDOCS_CONFIG);
   private indexState: IndexStatus['state'] = 'idle';
   private readonly dataDir: string;
   private readonly events: WorkspaceServiceEvents;
@@ -149,12 +156,15 @@ export class WorkspaceService {
 
     await this.close();
 
+    const loadedConfig = await loadLiveDocsConfig(reference.path);
+    this.documentSelector = createDocumentSelector(loadedConfig.config);
     this.workspaceInfo = {
       reference,
       kind: reference.kind,
       path: reference.path,
       name: workspaceReferenceName(reference),
       label: workspaceReferenceLabel(reference),
+      configDiagnostic: loadedConfig.diagnostic,
     };
     try {
       this.workspaceStore = WorkspaceStore.open(this.dataDir, reference);
@@ -168,6 +178,7 @@ export class WorkspaceService {
         callbacks: this.indexerCallbacks(),
       });
       this.watcher = watchWorkspace(reference.path, (events) => this.onWatchBatch(events));
+      await this.watcher.ready;
       this.events.onWorkspaceChanged?.(this.workspaceInfo);
       this.events.onIndexStatus?.(this.indexStatus());
       this.fullScan();
@@ -193,6 +204,7 @@ export class WorkspaceService {
     this.workspaceGit = null;
     this.workspaceStore = null;
     this.workspaceInfo = null;
+    this.documentSelector = createDocumentSelector(DEFAULT_LIVEDOCS_CONFIG);
     this.indexState = 'idle';
     await watcher?.close();
     await indexer?.dispose();
@@ -207,7 +219,7 @@ export class WorkspaceService {
   }
 
   async tree(): Promise<TreeNode | null> {
-    return this.workspaceInfo ? buildTree(this.workspaceInfo.path) : null;
+    return this.workspaceInfo ? buildTree(this.workspaceInfo.path, this.documentSelector) : null;
   }
 
   async readFile(relPath: string): Promise<FileContent> {
@@ -302,6 +314,14 @@ export class WorkspaceService {
   }
 
   private onWatchBatch(events: WatchEvent[]): void {
+    if (events.some((event) => event.path === LIVEDOCS_CONFIG_FILENAME)) {
+      void this.reloadConfig().finally(() => this.processWatchBatch(events));
+      return;
+    }
+    this.processWatchBatch(events);
+  }
+
+  private processWatchBatch(events: WatchEvent[]): void {
     this.events.onWatcherBatch?.(events);
     const changed = events
       .filter((e) => e.type === 'add' || e.type === 'change')
@@ -310,6 +330,15 @@ export class WorkspaceService {
     if (changed.length > 0 || removed.length > 0) {
       this.applyIndexChanges(changed, removed);
     }
+  }
+
+  private async reloadConfig(): Promise<void> {
+    const info = this.workspaceInfo;
+    if (!info) return;
+    const loadedConfig = await loadLiveDocsConfig(info.path);
+    this.documentSelector = createDocumentSelector(loadedConfig.config);
+    this.workspaceInfo = { ...info, configDiagnostic: loadedConfig.diagnostic };
+    this.events.onConfigChanged?.(this.workspaceInfo);
   }
 
   private applyIndexChanges(changed: string[], removed: string[]): void {

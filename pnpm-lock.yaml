@@ -169,6 +169,12 @@ importers:
       ignore:
         specifier: ^7.0.0
         version: 7.0.5
+      json5:
+        specifier: ^2.2.3
+        version: 2.2.3
+      minimatch:
+        specifier: ^10.0.3
+        version: 10.2.5
       simple-git:
         specifier: ^3.27.0
         version: 3.36.0

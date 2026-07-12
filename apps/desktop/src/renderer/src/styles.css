@@ -167,6 +167,13 @@ select {
   opacity: 0.8;
   font-size: 0.9em;
 }
+.config-banner {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--stale);
+  background: var(--stale-bg);
+  color: var(--stale);
+  line-height: 1.4;
+}
 .app-body {
   display: flex;
   flex: 1;

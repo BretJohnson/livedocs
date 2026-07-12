@@ -374,6 +374,97 @@ test.describe.serial('spec scenarios (non-git workspace)', () => {
   });
 });
 
+test.describe.serial('LiveDocs workspace configuration', () => {
+  let app: ElectronApplication;
+  let page: Page;
+  let userData: string;
+  let workspace: string;
+
+  test.beforeAll(async () => {
+    workspace = mkdtempSync(path.join(tmpdir(), 'livedocs-e2e-config-'));
+    mkdirSync(path.join(workspace, 'docs', 'archive'), { recursive: true });
+    mkdirSync(path.join(workspace, '.agents', 'skills', 'review'), { recursive: true });
+    writeFileSync(path.join(workspace, 'README.md'), '# Root Readme\n');
+    writeFileSync(path.join(workspace, 'docs', 'guide.md'), '# Guide\n');
+    writeFileSync(path.join(workspace, 'docs', 'archive', 'old.md'), '# Old\n');
+    writeFileSync(path.join(workspace, '.agents', 'skills', 'review', 'SKILL.md'), '# Skill\n');
+
+    userData = mkdtempSync(path.join(tmpdir(), 'livedocs-e2e-configud-'));
+    app = await _electron.launch({
+      args: [MAIN, '--no-sandbox'],
+      env: launchEnv({
+        LIVEDOCS_WORKSPACE: workspace,
+        LIVEDOCS_USER_DATA: userData,
+      }),
+    });
+    page = await app.firstWindow();
+    await expect(page.locator('.index-status')).toHaveText(/files indexed/, { timeout: 30_000 });
+  });
+
+  test.afterAll(async () => {
+    await closeElectronApp(app);
+    rmSync(userData, { recursive: true, force: true });
+    rmSync(workspace, { recursive: true, force: true });
+  });
+
+  test('uses defaults when config is absent and keeps hidden docs in the full tree', async () => {
+    const sidebar = page.locator('.sidebar');
+    await expect(sidebar.getByRole('button', { name: /README\.md/ })).toBeVisible();
+    await expect(sidebar.getByRole('button', { name: /SKILL\.md/ })).toHaveCount(0);
+
+    await page.locator('.sidebar-tabs button', { hasText: 'Files' }).click();
+    await sidebar.getByRole('button', { name: /\.agents/ }).click();
+    await sidebar.getByRole('button', { name: /skills/ }).click();
+    await sidebar.getByRole('button', { name: /review/ }).click();
+    await expect(sidebar.getByRole('button', { name: /SKILL\.md/ })).toBeVisible();
+  });
+
+  test('reloads include and exclude globs and opts a hidden document in', async () => {
+    await page.locator('.sidebar-tabs button', { hasText: 'Docs' }).click();
+    writeFileSync(
+      path.join(workspace, 'livedocs.jsonc'),
+      `{
+        // Only curated docs plus the review skill
+        "docs": {
+          "include": ["docs/**", ".agents/skills/**/*.md",],
+          "exclude": ["docs/archive/**"],
+        },
+      }`,
+    );
+
+    const sidebar = page.locator('.sidebar');
+    await expect(sidebar.getByRole('button', { name: /README\.md/ })).toHaveCount(0, {
+      timeout: 20_000,
+    });
+    await expect(sidebar.getByRole('button', { name: /guide\.md/ })).toBeVisible();
+    await expect(sidebar.getByRole('button', { name: /old\.md/ })).toHaveCount(0);
+    await sidebar.getByRole('button', { name: /review/ }).click();
+    await expect(sidebar.getByRole('button', { name: /SKILL\.md/ })).toBeVisible();
+    await expect(page.locator('.config-banner')).toHaveCount(0);
+  });
+
+  test('falls back with a warning for invalid config and clears it when removed', async () => {
+    writeFileSync(path.join(workspace, 'livedocs.jsonc'), '{ "docs": { "include": 42 } }');
+
+    await expect(page.locator('.config-banner')).toContainText('livedocs.jsonc', {
+      timeout: 20_000,
+    });
+    await expect(page.locator('.config-banner')).toContainText('docs.include');
+    await expect(
+      page.locator('.sidebar').getByRole('button', { name: /README\.md/ }),
+    ).toBeVisible();
+    await expect(page.locator('.sidebar').getByRole('button', { name: /SKILL\.md/ })).toHaveCount(
+      0,
+    );
+
+    unlinkSync(path.join(workspace, 'livedocs.jsonc'));
+    await expect(page.locator('.config-banner')).toHaveCount(0, { timeout: 20_000 });
+    await expect(
+      page.locator('.sidebar').getByRole('button', { name: /README\.md/ }),
+    ).toBeVisible();
+  });
+});
+
 test.describe.serial('spec scenarios (WSL agent workspace)', () => {
   let app: ElectronApplication;
   let page: Page;
@@ -386,7 +477,10 @@ test.describe.serial('spec scenarios (WSL agent workspace)', () => {
     const { execSync } = await import('node:child_process');
     repo = mkMockWslWorkspace('livedocs-e2e-wsl-');
     agentPath = mockWslPathForWindowsRepo(repo);
+    mkdirSync(path.join(repo, '.agents', 'skills', 'review'), { recursive: true });
     writeFileSync(path.join(repo, 'README.md'), '# WSL Agent Repo\n\nAgent search target.\n');
+    writeFileSync(path.join(repo, '.agents', 'skills', 'review', 'SKILL.md'), '# WSL Skill\n');
+    writeFileSync(path.join(repo, 'livedocs.jsonc'), '{ "docs": { "include": ["**/*.md"] } }\n');
     const git = (cmd: string) =>
       execSync(`git -c user.email=e2e@test -c user.name=E2E ${cmd}`, { cwd: repo });
     git('init -b main');
@@ -424,6 +518,12 @@ test.describe.serial('spec scenarios (WSL agent workspace)', () => {
   });
 
   test('renders documents, searches, reads Git, and updates from WSL agent events', async () => {
+    await expect(page.locator('.sidebar').getByRole('button', { name: /review/ })).toBeVisible();
+    await page
+      .locator('.sidebar')
+      .getByRole('button', { name: /review/ })
+      .click();
+    await expect(page.locator('.sidebar').getByRole('button', { name: /SKILL\.md/ })).toBeVisible();
     await page
       .locator('.sidebar')
       .getByRole('button', { name: /README\.md/ })
@@ -444,6 +544,19 @@ test.describe.serial('spec scenarios (WSL agent workspace)', () => {
       '# WSL Agent Repo\n\nAgent search target.\n\n## Agent Update\n',
     );
     await expect(page.locator('.doc-article')).toContainText('Agent Update', { timeout: 20_000 });
+
+    writeFileSync(path.join(repo, 'livedocs.jsonc'), '{ "docs": { "include": ["README.md"] } }');
+    await expect(page.locator('.sidebar').getByRole('button', { name: /review/ })).toHaveCount(0, {
+      timeout: 20_000,
+    });
+    await expect(
+      page.locator('.sidebar').getByRole('button', { name: /README\.md/ }),
+    ).toBeVisible();
+
+    writeFileSync(path.join(repo, 'livedocs.jsonc'), '{ "docs": { "include": false } }');
+    await expect(page.locator('.config-banner')).toContainText('docs.include', {
+      timeout: 20_000,
+    });
   });
 });
 

@@ -2,6 +2,7 @@ import path from 'node:path';
 import type { Stats } from 'node:fs';
 import chokidar, { type FSWatcher } from 'chokidar';
 import { createPathFilter } from './ignore-rules.js';
+import { LIVEDOCS_CONFIG_FILENAME } from './workspace-config.js';
 
 export type WatchEventType = 'add' | 'change' | 'unlink' | 'addDir' | 'unlinkDir';
 
@@ -12,6 +13,8 @@ export interface WatchEvent {
 }
 
 export interface WorkspaceWatcher {
+  /** Resolves after chokidar's initial scan is complete and changes can no longer be missed. */
+  ready: Promise<void>;
   close(): Promise<void>;
 }
 
@@ -41,6 +44,7 @@ export function watchWorkspace(
     ignored: (absPath: string, stats?: Stats) => {
       const rel = path.relative(workspaceRoot, absPath);
       if (!rel || rel.startsWith('..')) return false;
+      if (isLiveDocsConfigPath(rel)) return false;
       // Apply directory-only rules (`secret/`) once chokidar knows the entry
       // is a directory, so ignored directories are not descended into.
       return stats?.isDirectory() ? filter.ignoresDirectory(rel) : filter.ignores(rel);
@@ -51,6 +55,12 @@ export function watchWorkspace(
   const record = (type: WatchEventType) => (absPath: string) => {
     const rel = path.relative(workspaceRoot, absPath).split(path.sep).join('/');
     if (!rel || rel.startsWith('..')) return;
+    if (isLiveDocsConfigPath(rel)) {
+      pending.set(`${type}:${rel}`, { type, path: rel });
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(flush, debounceMs);
+      return;
+    }
     const isDir = type === 'addDir' || type === 'unlinkDir';
     if (isDir ? filter.ignoresDirectory(rel) : filter.ignores(rel)) return;
     pending.set(`${type}:${rel}`, { type, path: rel });
@@ -64,10 +74,16 @@ export function watchWorkspace(
   watcher.on('addDir', record('addDir'));
   watcher.on('unlinkDir', record('unlinkDir'));
 
+  const ready = new Promise<void>((resolve) => watcher.once('ready', resolve));
   return {
+    ready,
     close: async () => {
       if (timer) clearTimeout(timer);
       await watcher.close();
     },
   };
+}
+
+function isLiveDocsConfigPath(relPath: string): boolean {
+  return relPath.split(path.sep).join('/') === LIVEDOCS_CONFIG_FILENAME;
 }

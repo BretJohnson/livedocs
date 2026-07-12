@@ -41,6 +41,16 @@ function ConnectionBanner({ message }: { message: string }) {
   );
 }
 
+function ConfigBanner({ workspace }: { workspace: WorkspaceInfo }) {
+  const diagnostic = workspace.configDiagnostic;
+  if (!diagnostic) return null;
+  return (
+    <div className="config-banner" role="alert">
+      <strong>{diagnostic.path}</strong>: {diagnostic.message} Using default document visibility.
+    </div>
+  );
+}
+
 export default function App() {
   const [theme, toggleTheme] = useTheme();
   const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
@@ -68,11 +78,17 @@ export default function App() {
   }, [refreshWorkspaceState]);
 
   useEvent('workspace:changed', (info) => {
+    const sameWorkspace =
+      workspace !== null &&
+      info !== null &&
+      JSON.stringify(workspace.reference) === JSON.stringify(info.reference);
     setWorkspace(info);
     if (info) setConnectionMessage(null);
-    setCurrent(null);
-    setTree(null);
-    setGit(null);
+    if (!sameWorkspace) {
+      setCurrent(null);
+      setTree(null);
+      setGit(null);
+    }
     if (info) refreshWorkspaceState();
   });
 
@@ -185,6 +201,7 @@ export default function App() {
         </button>
       </header>
       {connectionMessage && <ConnectionBanner message={connectionMessage} />}
+      {workspace && <ConfigBanner workspace={workspace} />}
 
       <div className="app-body">
         {workspace ? (

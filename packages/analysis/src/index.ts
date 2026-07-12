@@ -18,6 +18,17 @@ export {
 } from './watcher.js';
 export { GitService, parseLogWithFiles, type GitInfo } from './git.js';
 export {
+  LIVEDOCS_CONFIG_FILENAME,
+  DEFAULT_LIVEDOCS_CONFIG,
+  loadLiveDocsConfig,
+  createDocumentSelector,
+  normalizeWorkspacePath,
+  type LiveDocsConfig,
+  type LiveDocsConfigDiagnostic,
+  type LoadedLiveDocsConfig,
+  type DocumentSelector,
+} from './workspace-config.js';
+export {
   startIndexerWorker,
   type IndexerWorkerData,
   type IndexerWorkerRequest,

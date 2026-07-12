@@ -56,6 +56,8 @@ export async function runWslAgent(argv = process.argv.slice(2)): Promise<void> {
       write({ kind: 'event', event: { type: 'gen.staleChanged', data: { items } } }),
     onWorkspaceChanged: (info) =>
       write({ kind: 'event', event: { type: 'workspace.changed', data: info } }),
+    onConfigChanged: (info) =>
+      write({ kind: 'event', event: { type: 'workspace.changed', data: info } }),
   });
 
   let buffer = '';

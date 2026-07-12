@@ -120,6 +120,32 @@ output lives in the store and is rendered into `:::generated{name=…}` sections
 time, so authored files are never modified by generation; AI-drafted edits are applied
 only after you accept the diff.
 
+## Workspace configuration
+
+Place an optional `livedocs.jsonc` file at the workspace root to control which Markdown
+files appear in the Docs tab. The file supports JSON comments and trailing commas:
+
+```jsonc
+{
+  "docs": {
+    "include": ["docs/**", ".agents/skills/**/*.md"],
+    "exclude": ["docs/archive/**"],
+  },
+}
+```
+
+`docs.include` and `docs.exclude` are optional arrays of workspace-relative globs using
+forward slashes on every platform. With no includes, all `.md` and `.markdown` files
+are candidates. Markdown beneath a directory whose name starts with `.` is hidden from
+the Docs tab by default; an explicit include can opt it back in. Excludes are applied
+last and always win. These settings do not remove files from the Files tab or source
+indexing.
+
+LiveDocs reloads the root configuration when it changes. If the file is malformed or a
+supported field has the wrong type, the workspace remains open, default document
+visibility is used, and a warning identifies the configuration error. Nested
+`livedocs.jsonc` files are not treated as configuration.
+
 ### Note on better-sqlite3 and ABIs
 
 The repo intentionally carries two copies of `better-sqlite3`: `apps/desktop` floats
