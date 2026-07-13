@@ -10,7 +10,12 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:wsl-agent": "node scripts/dev-wsl-agent.mjs",
-    "dev:windows-from-wsl": "node scripts/livedocs-wsl.mjs .",
+    "dev:windows-from-wsl": "node scripts/wsl-windows.mjs dev",
+    "build:windows-from-wsl": "node scripts/wsl-windows.mjs build",
+    "dist:windows-from-wsl": "node scripts/wsl-windows.mjs dist",
+    "launch:windows-from-wsl": "node scripts/wsl-windows.mjs launch",
+    "clean:windows-from-wsl": "node scripts/wsl-windows.mjs clean",
+    "launch:installed-windows-from-wsl": "node scripts/livedocs-wsl.mjs .",
     "build": "electron-vite build",
     "dist:win": "electron-vite build && electron-builder --win",
     "preview": "electron-vite preview",
@@ -19,6 +24,8 @@
     "install:wsl-launcher": "node scripts/install-wsl-launcher.mjs",
     "smoke:wsl-agent": "node scripts/smoke-wsl-agent.mjs",
     "smoke:wsl-native": "node scripts/smoke-wsl-native.mjs",
+    "smoke:wsl-windows": "node scripts/smoke-wsl-windows.mjs",
+    "smoke:wsl-windows:integration": "node scripts/smoke-wsl-windows-integration.mjs",
     "postinstall": "electron-rebuild -f -w better-sqlite3 && node ../../scripts/rebuild-store-sqlite.mjs",
     "test:e2e": "electron-vite build && playwright test"
   },

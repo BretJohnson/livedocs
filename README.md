@@ -25,7 +25,11 @@ pnpm install   # installs, builds better-sqlite3, and runs electron-rebuild
 ```bash
 pnpm dev        # launch the app with renderer HMR and main-process hot restart
 pnpm dev:windows-from-wsl
-                # from WSL, ask the native Windows app to open this WSL workspace
+                # from a WSL checkout, build/sync/launch the native Windows app
+pnpm build:windows-from-wsl
+                # one-shot native Windows production build driven from WSL
+pnpm dist:windows-from-wsl
+                # create the Windows installer from the same WSL checkout
 pnpm test       # unit tests (Vitest) across all packages
 pnpm test:e2e   # Playwright + Electron end-to-end suite (builds first)
 pnpm smoke:wsl-native
@@ -65,12 +69,13 @@ Also: if you launch from inside another Electron app's integrated terminal (e.g.
 Code/Cursor), make sure `ELECTRON_RUN_AS_NODE` is not set, or Electron starts as plain
 Node and exits immediately.
 
-The native Windows UI path keeps the repository, Git, indexing, file watching, and
-workspace SQLite state inside WSL while presenting the UI as a Windows app. Install
-dependencies separately in Windows and WSL; Electron and `better-sqlite3` native modules
-cannot be shared across the OS boundary. From WSL, `pnpm dev:windows-from-wsl` or an
-installed `livedocs .` launcher emits a `livedocs://wsl/open?...` request for the Windows
-app. See [Developer Setup](docs/developer-setup.md) for prerequisites and
+The preferred native Windows UI path uses one authoritative checkout in WSL. Running
+`pnpm dev:windows-from-wsl` builds and installs the Linux WSL agent, synchronizes source
+one way into a disposable NTFS mirror, installs isolated Windows dependencies there,
+and launches native Windows Electron with live source updates. The WSL and Windows
+`node_modules` trees are never shared. The older installed-app bridge remains available
+as `pnpm launch:installed-windows-from-wsl` or `livedocs .`. See
+[Developer Setup](docs/developer-setup.md) for prerequisites and
 [docs/wsl-native-windows.md](docs/wsl-native-windows.md) for protocol, packaging, and
 troubleshooting details.
 
